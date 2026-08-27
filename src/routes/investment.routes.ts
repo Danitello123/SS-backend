@@ -1,7 +1,7 @@
 import { Router, type RequestHandler } from "express";
 import { InvestmentController } from "../controllers/investment.controller";
 import { InvestmentService } from "../services/investment.service";
-import { checkKycVerified, createAuthMiddleware } from "../middleware/auth.middleware";
+import { createAuthMiddleware } from "../middleware/auth.middleware";
 import { createWalletRateLimiter } from "../middleware/rate-limit-wallet.middleware";
 import { checkContractNotPaused } from "../middleware/contract-pause-guard.middleware";
 import type { AuthService } from "../services/auth.service";

@@ -4,6 +4,7 @@ import { Investment } from "../../models/Investment.model";
 import { Transaction } from "../../models/Transaction.model";
 import { InvestmentStatus, TransactionStatus, TransactionType } from "../../types/enums";
 import { ServiceError } from "../../utils/service-error";
+import { normalizeHorizonPayment, normalizeHorizonTransaction } from "../../utils/horizon-response";
 
 type FetchLike = typeof fetch;
 type SleepFn = (ms: number) => Promise<void>;
@@ -231,9 +232,9 @@ export class VerifyPaymentService {
     expectedAmount: string,
     operationIndex?: number,
   ): Promise<PaymentMatch> {
-    const transaction = await this.fetchJson<HorizonTransactionResponse>(
+    const transaction = normalizeHorizonTransaction(await this.fetchJson<HorizonTransactionResponse>(
       `/transactions/${stellarTxHash}`,
-    );
+    ));
 
     if (!transaction.successful) {
       throw new ServiceError(
@@ -249,7 +250,7 @@ export class VerifyPaymentService {
 
     const paymentOperations = (operations._embedded?.records ?? [])
       .map((operation, index) => ({
-        ...operation,
+        ...normalizeHorizonPayment(operation),
         operationIndex: index,
       }))
       .filter((operation) => operation.type === "payment");
@@ -260,10 +261,10 @@ export class VerifyPaymentService {
       }
 
       return (
-        operation.asset_code === this.config.usdcAssetCode &&
-        operation.asset_issuer === this.config.usdcAssetIssuer &&
-        operation.to === this.config.escrowPublicKey &&
-        operation.amount !== undefined &&
+        operation.assetCode === this.config.usdcAssetCode &&
+        operation.assetIssuer === this.config.usdcAssetIssuer &&
+        operation.destination === this.config.escrowPublicKey &&
+        operation.amount !== null &&
         amountsWithinDelta(
           operation.amount,
           expectedAmount,
@@ -293,9 +294,9 @@ export class VerifyPaymentService {
     return {
       operationIndex: match.operationIndex,
       amount: match.amount ?? expectedAmount,
-      destination: match.to ?? "",
-      assetCode: match.asset_code ?? "",
-      assetIssuer: match.asset_issuer ?? "",
+      destination: match.destination ?? "",
+      assetCode: match.assetCode ?? "",
+      assetIssuer: match.assetIssuer ?? "",
     };
   }
 

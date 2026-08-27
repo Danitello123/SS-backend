@@ -17,7 +17,12 @@ import { createInvestmentRouter } from "./routes/investment.routes";
 import { createSettlementRouter } from "./routes/settlement.routes";
 import { createMarketplaceRouter } from "./routes/marketplace.routes";
 import { createAdminRouter } from "./routes/admin/admin.routes";
+import { createKycRouter, createKycWebhookRouter } from "./routes/kyc.routes";
 import { createContractGuardService } from "./services/stellar/contract-guard.service";
+import {
+  createInvestorInsightsRouter,
+  createYieldAdjustmentRouter,
+} from "./routes/investor-insights.routes";
 
 import type { AuthService } from "./services/auth.service";
 import type { NotificationService } from "./services/notification.service";
@@ -26,6 +31,7 @@ import type { InvestmentService } from "./services/investment.service";
 import type { SettlementService } from "./services/settlement.service";
 import type { MarketplaceService } from "./services/marketplace.service";
 import type { KycService } from "./services/kyc.service";
+import type { InvestorInsightsService } from "./services/investor-insights.service";
 
 import dataSource from "./config/database";
 
@@ -63,6 +69,7 @@ export interface AppDependencies {
   settlementService?: SettlementService;
   marketplaceService?: MarketplaceService;
   kycService?: KycService;
+  investorInsightsService?: InvestorInsightsService;
   logger?: AppLogger;
   metricsEnabled?: boolean;
   metricsRegistry?: MetricsRegistry;
@@ -89,6 +96,7 @@ export function createApp({
   settlementService,
   marketplaceService,
   kycService,
+  investorInsightsService,
   logger: appLogger = logger,
   metricsEnabled = true,
   metricsRegistry = new MetricsRegistry(),
@@ -189,6 +197,11 @@ export function createApp({
     app.use("/api/v1/notifications", createNotificationRouter(notificationService, authService));
   }
 
+  if (investorInsightsService) {
+    app.use("/api/v1/investors", createInvestorInsightsRouter(investorInsightsService, authService));
+    app.use("/api/v1/invoices", createYieldAdjustmentRouter(investorInsightsService));
+  }
+
   if (invoiceService && config) {
     app.use("/api/v1/invoices", createInvoiceRouter({ invoiceService, config }));
   }
@@ -233,7 +246,12 @@ export function createApp({
   if (config?.admin?.ipWhitelist?.length) {
     app.use(
       "/api/v1/admin",
-      createAdminRouter({ dataSource, allowedCidrs: config.admin.ipWhitelist, invoiceService }),
+      createAdminRouter({
+        dataSource,
+        allowedCidrs: config.admin.ipWhitelist,
+        invoiceService,
+        investorInsightsService,
+      }),
     );
   }
 

@@ -16,6 +16,8 @@ import { createMarketplaceService } from "./services/marketplace.service";
 import { KycService } from "./services/kyc.service";
 import { PaymentDistributorContractService } from "./services/stellar/payment-distributor-contract.service";
 import { getSorobanConfig } from "./config/stellar";
+import { EventIndexerService } from "./services/stellar/event-indexer.service";
+import { createInvestorInsightsService } from "./services/investor-insights.service";
 
 export async function bootstrap(): Promise<{ server: Server }> {
   const config = getConfig();
@@ -30,6 +32,31 @@ export async function bootstrap(): Promise<{ server: Server }> {
   const invoiceService = createInvoiceService(dataSource, ipfsService, notificationService);
   const investmentService = createInvestmentService(dataSource);
   const sorobanConfig = getSorobanConfig();
+  const investorInsightsService = createInvestorInsightsService(
+    dataSource,
+    {
+      notificationServiceUrl: process.env.NOTIFICATION_SERVICE_URL,
+      notificationServiceToken: process.env.NOTIFICATION_SERVICE_TOKEN,
+      bonusPoolContractId: process.env.ONBOARDING_BONUS_CONTRACT_ID,
+      bonusPoolStorageKey: process.env.ONBOARDING_BONUS_POOL_STORAGE_KEY,
+      rpcUrl: sorobanConfig.rpcUrl,
+    },
+    logger,
+  );
+  const indexerContractIds = (process.env.SOROBAN_INDEXER_CONTRACT_IDS ?? "")
+    .split(",")
+    .map((contractId) => contractId.trim())
+    .filter(Boolean);
+  const eventIndexer = indexerContractIds.length > 0
+    ? new EventIndexerService({
+      contractIds: indexerContractIds,
+      rpcUrl: sorobanConfig.rpcUrl,
+      dataSource,
+      logger,
+      investorInsightsService,
+    })
+    : undefined;
+  eventIndexer?.start();
   const distributor = sorobanConfig.paymentDistributorContractId && sorobanConfig.platformSecretKey
     ? new PaymentDistributorContractService({ ...sorobanConfig, contractId: sorobanConfig.paymentDistributorContractId }, logger)
     : undefined;
@@ -48,6 +75,7 @@ export async function bootstrap(): Promise<{ server: Server }> {
     settlementService,
     marketplaceService,
     kycService,
+    investorInsightsService,
     config,
     logger,
     metricsEnabled: config.observability.metricsEnabled,
@@ -56,6 +84,7 @@ export async function bootstrap(): Promise<{ server: Server }> {
   const server = app.listen(config.port, () => {
     logger.info("Server running", { port: config.port });
   });
+  server.on("close", () => eventIndexer?.stop());
 
   return { server };
 }

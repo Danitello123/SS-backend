@@ -562,6 +562,54 @@ export class InvoiceService {
   }
 
   /**
+   * Admin rejection flow for pending invoices.
+   */
+  async rejectInvoice(input: { invoiceId: string; rejectionReason: string }): Promise<InvoiceDTO> {
+    const invoice = await this.invoiceRepository.findOne({
+      where: { id: input.invoiceId },
+      relations: ["seller"],
+    });
+
+    if (!invoice) {
+      throw new ServiceError("invoice_not_found", "Invoice not found", 404);
+    }
+
+    if (invoice.status === InvoiceStatus.REJECTED) {
+      throw new ServiceError(
+        "invoice_already_rejected",
+        "Invoice has already been rejected",
+        409,
+      );
+    }
+
+    if (!this.isValidTransition(invoice.status, InvoiceStatus.REJECTED)) {
+      throw new ServiceError(
+        "invalid_status_transition",
+        `Cannot transition from ${invoice.status} to ${InvoiceStatus.REJECTED}`,
+        409,
+      );
+    }
+
+    const reason = input.rejectionReason.trim();
+    invoice.rejectionReason = reason;
+    invoice.status = InvoiceStatus.REJECTED;
+    invoice.updatedAt = new Date();
+
+    const updated = await this.invoiceRepository.save(invoice);
+
+    if (this.notificationSink) {
+      await this.notificationSink.createNotification(
+        invoice.sellerId,
+        NotificationType.INVOICE,
+        "Invoice rejected",
+        `Your invoice was rejected: ${reason}`,
+      );
+    }
+
+    return this.toDTO(updated);
+  }
+
+  /**
    * Upload document (IPFS)
    */
   async uploadDocument(input: UploadDocumentInput): Promise<UploadDocumentResult> {

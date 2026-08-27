@@ -1,12 +1,15 @@
 import { SorobanRpc, scValToNative, xdr } from "stellar-sdk";
+import { createHash } from "crypto";
 import type { DataSource, Repository } from "typeorm";
 import type { AppLogger } from "../../observability/logger";
 import { logger as globalLogger } from "../../observability/logger";
 import { SorobanEventLog } from "../../models/SorobanEventLog.model";
+import { SorobanIndexerCheckpoint } from "../../models/SorobanIndexerCheckpoint.model";
 import { Invoice } from "../../models/Invoice.model";
 import { Investment } from "../../models/Investment.model";
 import { InvoiceStatus } from "../../types/enums";
 import type { DecodedSorobanEvent } from "../../types/soroban.types";
+import type { InvestorInsightsService } from "../investor-insights.service";
 
 export interface EventIndexerServiceDependencies {
   contractIds: string[];
@@ -17,6 +20,7 @@ export interface EventIndexerServiceDependencies {
   eventLogRepository?: Repository<SorobanEventLog>;
   invoiceRepository?: Repository<Invoice>;
   investmentRepository?: Repository<Investment>;
+  investorInsightsService?: InvestorInsightsService;
 }
 
 export interface PollEventsOptions {
@@ -33,16 +37,28 @@ export class EventIndexerService {
   private readonly eventLogRepository?: Repository<SorobanEventLog>;
   private readonly invoiceRepository?: Repository<Invoice>;
   private readonly investmentRepository?: Repository<Investment>;
+  private readonly investorInsightsService?: InvestorInsightsService;
+  private readonly checkpointRepository?: Repository<SorobanIndexerCheckpoint>;
+  private readonly checkpointId: string;
   private intervalHandle: NodeJS.Timeout | null = null;
   private lastIndexedLedger = 0;
+  private latestObservedLedger = 0;
+  private polling = false;
 
   constructor(dependencies: EventIndexerServiceDependencies) {
     if (!dependencies.contractIds || dependencies.contractIds.length === 0) {
       throw new Error("At least one contractId is required.");
     }
+    if (dependencies.contractIds.length > 25) {
+      throw new Error("Soroban RPC supports at most 25 contract IDs per event indexer.");
+    }
     this.contractIds = dependencies.contractIds;
+    this.checkpointId = createHash("sha256")
+      .update([...dependencies.contractIds].sort().join(","))
+      .digest("hex");
     this.logger = dependencies.logger ?? globalLogger;
     this.dataSource = dependencies.dataSource;
+    this.investorInsightsService = dependencies.investorInsightsService;
 
     if (dependencies.server) {
       this.rpcServer = dependencies.server;
@@ -69,6 +85,10 @@ export class EventIndexerService {
       this.investmentRepository = dependencies.investmentRepository;
     } else if (this.dataSource) {
       this.investmentRepository = this.dataSource.getRepository(Investment);
+    }
+
+    if (this.dataSource) {
+      this.checkpointRepository = this.dataSource.getRepository(SorobanIndexerCheckpoint);
     }
   }
 
@@ -149,30 +169,49 @@ export class EventIndexerService {
       options.startLedger ?? (await this.getLastIndexedLedger()) + 1;
 
     try {
-      const filters = [
-        {
-          type: "contract" as const,
-          contractIds: this.contractIds,
-        },
-      ];
+      const filters: NonNullable<SorobanRpc.Server.GetEventsRequest["filters"]> = [];
+      for (let index = 0; index < this.contractIds.length; index += 5) {
+        filters.push({
+          type: "contract",
+          contractIds: this.contractIds.slice(index, index + 5),
+        });
+      }
 
       const requestParams: SorobanRpc.Server.GetEventsRequest = {
         filters,
         limit: options.limit ?? 100,
       };
 
-      if (startLedger > 1) {
+      if (startLedger > 1 && !options.cursor) {
         requestParams.startLedger = startLedger;
       }
 
-      if (options.cursor) {
-        requestParams.cursor = options.cursor;
-      }
-
-      const response = await this.rpcServer.getEvents(requestParams);
-      const events = response.events || [];
-
-      const decodedEvents = events.map((e) => this.decodeEvent(e));
+      let cursor = options.cursor;
+      const seenCursors = new Set<string>();
+      const decodedEvents: DecodedSorobanEvent[] = [];
+      do {
+        const params: SorobanRpc.Server.GetEventsRequest = { ...requestParams };
+        if (cursor) {
+          params.cursor = cursor;
+          delete params.startLedger;
+        }
+        const response = await this.rpcServer.getEvents(params);
+        const responseWithCursor = response as SorobanRpc.Api.GetEventsResponse & {
+          cursor?: string;
+        };
+        this.latestObservedLedger = Math.max(
+          this.latestObservedLedger,
+          response.latestLedger ?? 0,
+        );
+        decodedEvents.push(...(response.events ?? []).map((event) => this.decodeEvent(event)));
+        const nextCursor = responseWithCursor.cursor;
+        if (!nextCursor || nextCursor === cursor) break;
+        if (seenCursors.has(nextCursor)) {
+          throw new Error("Soroban RPC returned a repeated event cursor.");
+        }
+        seenCursors.add(nextCursor);
+        cursor = nextCursor;
+      } while (cursor);
 
       this.logger.info("Polled Soroban contract events", {
         startLedger,
@@ -194,39 +233,52 @@ export class EventIndexerService {
    */
   public async ingestEvents(events: DecodedSorobanEvent[]): Promise<number> {
     let processedCount = 0;
+    let highestProcessedLedger = this.lastIndexedLedger;
 
     for (const event of events) {
+      const eventId = event.id || `${event.txHash}:${event.topic}:${event.ledger}`;
       try {
+        const existingLog = this.eventLogRepository
+          ? await this.eventLogRepository.findOne({ where: { eventId } })
+          : null;
+        if (existingLog?.processed) {
+          highestProcessedLedger = Math.max(highestProcessedLedger, event.ledger);
+          continue;
+        }
+
         if (this.eventLogRepository) {
-          const logEntry = this.eventLogRepository.create({
-            contractId: event.contractId,
-            ledgerSequence: event.ledger.toString(),
-            topic: event.topic,
-            txHash: event.txHash,
-            payload: {
-              topics: event.topics,
-              data: event.data,
-              ledgerClosedAt: event.ledgerClosedAt,
-            },
-            processed: false,
-          });
-          await this.eventLogRepository.save(logEntry);
+          if (existingLog) {
+            await this.eventLogRepository.update({ eventId }, { processed: false });
+          } else {
+            const logEntry = this.eventLogRepository.create({
+              eventId,
+              contractId: event.contractId,
+              ledgerSequence: event.ledger.toString(),
+              topic: event.topic,
+              txHash: event.txHash,
+              payload: {
+                topics: event.topics,
+                data: event.data,
+                ledgerClosedAt: event.ledgerClosedAt,
+              },
+              processed: false,
+            });
+            await this.eventLogRepository.save(logEntry);
+          }
         }
 
         // Apply state transitions based on event topics
         await this.applyEventStateTransition(event);
+        await this.investorInsightsService?.processEvent(event);
 
         if (this.eventLogRepository) {
           await this.eventLogRepository.update(
-            { txHash: event.txHash, topic: event.topic },
+            { eventId },
             { processed: true },
           );
         }
 
-        if (event.ledger > this.lastIndexedLedger) {
-          this.lastIndexedLedger = event.ledger;
-        }
-
+        highestProcessedLedger = Math.max(highestProcessedLedger, event.ledger);
         processedCount++;
       } catch (err) {
         this.logger.error("Error processing Soroban event", {
@@ -234,9 +286,19 @@ export class EventIndexerService {
           eventId: event.id,
           topic: event.topic,
         });
+        throw err;
       }
     }
 
+    this.lastIndexedLedger = highestProcessedLedger;
+    const checkpointLedger = Math.max(highestProcessedLedger, this.latestObservedLedger);
+    if (checkpointLedger > 0 && this.checkpointRepository) {
+      await this.checkpointRepository.save(this.checkpointRepository.create({
+        indexerId: this.checkpointId,
+        ledgerSequence: checkpointLedger.toString(),
+      }));
+      this.lastIndexedLedger = checkpointLedger;
+    }
     return processedCount;
   }
 
@@ -317,14 +379,26 @@ export class EventIndexerService {
     }
 
     if (this.eventLogRepository) {
+      const checkpoint = this.checkpointRepository
+        ? await this.checkpointRepository.findOne({ where: { indexerId: this.checkpointId } })
+        : null;
       const latest = await this.eventLogRepository.findOne({
-        where: {},
+        where: { processed: true },
         order: { ledgerSequence: "DESC" },
       });
-      if (latest && latest.ledgerSequence) {
-        this.lastIndexedLedger = Number(latest.ledgerSequence);
-        return this.lastIndexedLedger;
+      const pending = await this.eventLogRepository.findOne({
+        where: { processed: false },
+        order: { ledgerSequence: "ASC" },
+      });
+      let ledger = checkpoint?.ledgerSequence
+        ? Number(checkpoint.ledgerSequence)
+        : latest?.ledgerSequence ? Number(latest.ledgerSequence) : 0;
+      if (pending?.processed === false) {
+        const beforePending = Number(pending.ledgerSequence) - 1;
+        ledger = ledger > 0 ? Math.min(ledger, beforePending) : beforePending;
       }
+      this.lastIndexedLedger = Math.max(0, ledger);
+      return this.lastIndexedLedger;
     }
 
     return 0;
@@ -342,13 +416,15 @@ export class EventIndexerService {
     });
 
     this.intervalHandle = setInterval(async () => {
+      if (this.polling) return;
+      this.polling = true;
       try {
         const events = await this.pollContractEvents();
-        if (events.length > 0) {
-          await this.ingestEvents(events);
-        }
+        await this.ingestEvents(events);
       } catch (err) {
         this.logger.error("Error in Soroban event indexer poll cycle", { err });
+      } finally {
+        this.polling = false;
       }
     }, intervalMs);
   }

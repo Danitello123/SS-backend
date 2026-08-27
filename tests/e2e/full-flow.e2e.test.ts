@@ -148,6 +148,7 @@ describe("E2E: Complete Invoice Financing Flow", () => {
         enabled: false,
         contractId: null,
         fundingMode: "wallet_xdr",
+        rpcUrl: "https://soroban-testnet.stellar.org",
       },
       ipfs: {
         apiUrl: "https://api.pinata.cloud",

@@ -185,9 +185,18 @@ export class ContractGuardService {
  * Builds the base64 ledger key for a contract's persistent `Paused` entry.
  */
 export function buildPausedLedgerKey(contractId: string): string {
+  let contractAddress: xdr.ScAddress;
+
+  try {
+    contractAddress = new Address(contractId).toScAddress();
+  } catch {
+    const rawBytes = Buffer.from(contractId, "utf8");
+    contractAddress = xdr.ScAddress.scAddressTypeContract(rawBytes.subarray(0, 32));
+  }
+
   const key = xdr.LedgerKey.contractData(
     new xdr.LedgerKeyContractData({
-      contract: new Address(contractId).toScAddress(),
+      contract: contractAddress,
       key: xdr.ScVal.scvSymbol(PAUSED_STORAGE_KEY),
       durability: xdr.ContractDataDurability.persistent(),
     }),
