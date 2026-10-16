@@ -1159,8 +1159,9 @@ describe("InvoiceService", () => {
       mockInvoiceRepository.findOneBy.mockResolvedValue(null);
       mockInvoiceRepository.create.mockReturnValue(mockInvoice);
       mockInvoiceRepository.save.mockRejectedValue(new Error("Connection refused"));
+    });
 
-      it("should record a null actor when the admin is unknown", async () => {
+    it("should record a null actor when the admin is unknown", async () => {
         mockInvoiceRepository.findOne.mockResolvedValue(mockInvoice);
 
         await service.rejectInvoice({ invoiceId: "invoice-123", rejectionReason: "No PO" });
@@ -1217,7 +1218,6 @@ describe("InvoiceService", () => {
         expect(stateMachine.dispatch).not.toHaveBeenCalled();
       });
     });
-  });
 
     describe("submitInvoiceForReview", () => {
       it("should move a draft to pending on behalf of its seller", async () => {
