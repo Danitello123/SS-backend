@@ -17,6 +17,7 @@
     "prepare": "husky"
   },
   "dependencies": {
+    "archiver": "^7.0.1",
     "bcrypt": "^5.1.1",
     "cors": "^2.8.5",
     "decimal.js": "^10.6.0",
@@ -37,6 +38,7 @@
   "devDependencies": {
     "@commitlint/cli": "^20.5.0",
     "@commitlint/config-conventional": "^20.5.0",
+    "@types/archiver": "^6.0.2",
     "@types/bcrypt": "^5.0.2",
     "@types/cors": "^2.8.17",
     "@types/decimal.js": "^0.0.32",

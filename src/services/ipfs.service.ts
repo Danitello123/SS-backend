@@ -123,6 +123,32 @@ export class IPFSService {
       );
     }
   }
+
+  /**
+   * Downloads one previously-pinned file by CID from the configured IPFS
+   * gateway (issue #589's bulk export needs the bytes back, not just a CID).
+   */
+  async fetchFile(cid: string): Promise<Buffer> {
+    const url = `${this.config.gatewayUrl.replace(/\/+$/, "")}/${cid}`;
+
+    let response: Response;
+    try {
+      response = await this.fetchImplementation(url);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      this.logger.warn("IPFS document fetch failed", { cid, error_reason: errorMessage });
+      throw new ServiceError("ipfs_fetch_error", `Failed to fetch ${cid} from IPFS gateway: ${errorMessage}`, 502);
+    }
+
+    if (!response.ok) {
+      const errorReason = `${response.status} ${response.statusText}`;
+      this.logger.warn("IPFS document fetch failed", { cid, error_reason: errorReason });
+      throw new ServiceError("ipfs_fetch_failed", `IPFS gateway fetch failed for ${cid}: ${errorReason}`, 502);
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    return Buffer.from(arrayBuffer);
+  }
 }
 
 export function createIPFSService(config: AppConfig["ipfs"], logger: AppLogger): IPFSService {

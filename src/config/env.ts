@@ -1,6 +1,8 @@
 import { config } from "dotenv";
 import "dotenv/config";
 import { Networks } from "stellar-sdk";
+import path from "path";
+import os from "os";
 
 config();
 
@@ -50,12 +52,21 @@ export interface AppConfig {
   ipfs: {
     apiUrl: string;
     jwt: string;
+    gatewayUrl: string;
     maxFileSizeMB: number;
     allowedMimeTypes: string[];
     uploadRateLimit: {
       windowMs: number;
       maxUploads: number;
     };
+  };
+  documentExport: {
+    /** Signs/verifies the download token in a bulk-export's signed URL (issue #589). */
+    signingSecret: string;
+    /** How long a signed download URL (and the ZIP it points to) stays valid. */
+    urlTtlMinutes: number;
+    /** Where generated ZIPs are written before being streamed and cleaned up. */
+    tempDir: string;
   };
   kyc: {
     skipVerification: boolean;
@@ -90,6 +101,9 @@ const DEFAULT_IPFS_ALLOWED_MIME_TYPES = [
 
 const DEFAULT_IPFS_UPLOAD_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const DEFAULT_IPFS_UPLOAD_RATE_LIMIT_MAX_UPLOADS = 10;
+const DEFAULT_IPFS_GATEWAY_URL = "https://gateway.pinata.cloud/ipfs";
+
+const DEFAULT_DOCUMENT_EXPORT_URL_TTL_MINUTES = 60;
 
 
 // ---------------- HELPERS ----------------
@@ -257,6 +271,7 @@ export function getConfig(): AppConfig {
     ipfs: {
       apiUrl: requireString(process.env.IPFS_API_URL, "IPFS_API_URL"),
       jwt: requireString(process.env.IPFS_JWT, "IPFS_JWT"),
+      gatewayUrl: process.env.IPFS_GATEWAY_URL ?? DEFAULT_IPFS_GATEWAY_URL,
       maxFileSizeMB: parsePositiveInteger(
         process.env.IPFS_MAX_FILE_SIZE_MB,
         DEFAULT_IPFS_MAX_FILE_SIZE_MB,
@@ -278,6 +293,16 @@ export function getConfig(): AppConfig {
           "IPFS_UPLOAD_RATE_LIMIT_MAX_UPLOADS"
         ),
       },
+    },
+
+    documentExport: {
+      signingSecret: process.env.DOCUMENT_EXPORT_SIGNING_SECRET ?? requireString(process.env.JWT_SECRET, "JWT_SECRET"),
+      urlTtlMinutes: parsePositiveInteger(
+        process.env.DOCUMENT_EXPORT_URL_TTL_MINUTES,
+        DEFAULT_DOCUMENT_EXPORT_URL_TTL_MINUTES,
+        "DOCUMENT_EXPORT_URL_TTL_MINUTES"
+      ),
+      tempDir: process.env.DOCUMENT_EXPORT_TEMP_DIR ?? path.join(os.tmpdir(), "invoice-exports"),
     },
 
     kyc: {

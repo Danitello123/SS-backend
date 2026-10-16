@@ -25,7 +25,11 @@ export interface SettleInvoiceResult {
 }
 
 export class SettlementService {
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    /** Notified with the invoice's `sellerId` once it settles, so cached issuer analytics can be invalidated (issue #587). */
+    private readonly onInvoiceChanged?: (sellerId: string) => void,
+  ) {}
 
   /**
    * Settles a funded invoice by distributing proceeds to each investor
@@ -100,6 +104,7 @@ export class SettlementService {
       // 5. Transition invoice to SETTLED
       invoice.status = InvoiceStatus.SETTLED;
       await transactionalEntityManager.save(Invoice, invoice);
+      this.onInvoiceChanged?.(invoice.sellerId);
 
       return {
         invoiceId: invoice.id,
@@ -111,6 +116,9 @@ export class SettlementService {
   }
 }
 
-export function createSettlementService(dataSource: DataSource): SettlementService {
-  return new SettlementService(dataSource);
+export function createSettlementService(
+  dataSource: DataSource,
+  onInvoiceChanged?: (sellerId: string) => void,
+): SettlementService {
+  return new SettlementService(dataSource, onInvoiceChanged);
 }

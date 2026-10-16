@@ -57,3 +57,16 @@ export enum NotificationType {
   KYC = "kyc",
   SYSTEM = "system",
 }
+
+/** Risk band an auto-invest rule can require (issue #596), derived from `Invoice.riskScore` (0-100, lower is safer). `null` on the rule matches any tier. */
+export enum RiskTier {
+  LOW = "low",
+  MEDIUM = "medium",
+  HIGH = "high",
+}
+
+export enum AutoInvestExecutionStatus {
+  EXECUTED = "executed",
+  SKIPPED_INSUFFICIENT_BALANCE = "skipped_insufficient_balance",
+  FAILED = "failed",
+}

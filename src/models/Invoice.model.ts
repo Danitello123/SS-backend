@@ -47,6 +47,13 @@ export class Invoice {
   @Column({ name: "risk_score", type: "decimal", precision: 5, scale: 2, nullable: true })
   riskScore!: string | null;
 
+  /** Invoice category/industry (e.g. "logistics", "retail"), used to match
+   * against auto-invest rule criteria (issue #596). Freeform; not an enum,
+   * since issuers list many industries and this isn't validated elsewhere yet. */
+  @Column({ name: "category", type: "varchar", length: 64, nullable: true })
+  @Index("idx_invoices_category")
+  category!: string | null;
+
   @Column({
     type: "enum",
     enum: InvoiceStatus,

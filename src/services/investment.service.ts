@@ -25,7 +25,11 @@ export interface InvestorDashboard {
 const ACTIVE_INVESTMENT_STATUSES = [InvestmentStatus.PENDING, InvestmentStatus.CONFIRMED];
 
 export class InvestmentService {
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    /** Notified with `sellerId` whenever an invoice this creates an investment for changes state (e.g. becomes FUNDED), so cached issuer analytics can be invalidated. */
+    private readonly onInvoiceChanged?: (sellerId: string) => void,
+  ) {}
 
   /**
    * Aggregates an investor's portfolio across all their investments.
@@ -147,6 +151,7 @@ export class InvestmentService {
       if (newTotalInvested.gte(netAmount)) {
         invoice.status = InvoiceStatus.FUNDED;
         await transactionalEntityManager.save(Invoice, invoice);
+        this.onInvoiceChanged?.(invoice.sellerId);
       }
 
       return savedInvestment;
@@ -154,6 +159,9 @@ export class InvestmentService {
   }
 }
 
-export function createInvestmentService(dataSource: DataSource): InvestmentService {
-  return new InvestmentService(dataSource);
+export function createInvestmentService(
+  dataSource: DataSource,
+  onInvoiceChanged?: (sellerId: string) => void,
+): InvestmentService {
+  return new InvestmentService(dataSource, onInvoiceChanged);
 }

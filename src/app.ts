@@ -5,6 +5,7 @@ import express, { Request } from "express";
 import { createErrorMiddleware, notFoundMiddleware } from "./middleware/error.middleware";
 import { applyRateLimiters } from "./middleware/rate-limit.middleware";
 import { createRequestObservabilityMiddleware } from "./middleware/request-observability.middleware";
+import { createNetworkContextMiddleware } from "./middleware/network-context.middleware";
 
 import { logger, type AppLogger } from "./observability/logger";
 import { getMetricsContentType, MetricsRegistry } from "./observability/metrics";
@@ -14,14 +15,21 @@ import { createNotificationRouter } from "./routes/notification.routes";
 import { createInvoiceRouter } from "./routes/invoice.routes";
 import { createInvestmentRouter } from "./routes/investment.routes";
 import { createSettlementRouter } from "./routes/settlement.routes";
+import { createIssuerAnalyticsRouter } from "./routes/issuer-analytics.routes";
+import { createDocumentExportRouter } from "./routes/document-export.routes";
+import { createAutoInvestRouter } from "./routes/auto-invest.routes";
 
 import type { AuthService } from "./services/auth.service";
 import type { NotificationService } from "./services/notification.service";
 import type { InvoiceService } from "./services/invoice.service";
 import type { InvestmentService } from "./services/investment.service";
 import type { SettlementService } from "./services/settlement.service";
+import type { IssuerAnalyticsService } from "./services/issuer-analytics.service";
+import type { DocumentExportService } from "./services/document-export.service";
+import type { AutoInvestRulesService } from "./services/auto-invest-rules.service";
 
 import dataSource from "./config/database";
+import type { StellarNetworksConfig } from "./config/stellar-networks";
 
 //  REQUIRED
 export function createRequestLifecycleTracker() {
@@ -55,10 +63,14 @@ export interface AppDependencies {
   invoiceService?: InvoiceService;
   investmentService?: InvestmentService;
   settlementService?: SettlementService;
+  issuerAnalyticsService?: IssuerAnalyticsService;
+  documentExportService?: DocumentExportService;
+  autoInvestRulesService?: AutoInvestRulesService;
   logger?: AppLogger;
   metricsEnabled?: boolean;
   metricsRegistry?: MetricsRegistry;
   config?: import("./config/env").AppConfig;
+  stellarNetworksConfig?: StellarNetworksConfig;
 
   http?: {
     trustProxy?: boolean | number | string;
@@ -79,11 +91,15 @@ export function createApp({
   invoiceService,
   investmentService,
   settlementService,
+  issuerAnalyticsService,
+  documentExportService,
+  autoInvestRulesService,
   logger: appLogger = logger,
   metricsEnabled = true,
   metricsRegistry = new MetricsRegistry(),
   config,
   http,
+  stellarNetworksConfig,
 }: AppDependencies) {
   const app = express();
 
@@ -121,6 +137,10 @@ export function createApp({
       metricsRegistry,
     }),
   );
+
+  if (stellarNetworksConfig) {
+    app.use(createNetworkContextMiddleware(stellarNetworksConfig));
+  }
 
   app.get("/health", (req, res) => {
     const requestId =
@@ -179,6 +199,24 @@ export function createApp({
 
   if (settlementService) {
     app.use("/api/v1/settlements", createSettlementRouter({ settlementService }));
+  }
+
+  if (issuerAnalyticsService) {
+    app.use("/api/v1/issuers", createIssuerAnalyticsRouter({ issuerAnalyticsService }));
+  }
+
+  if (documentExportService) {
+    app.use(
+      "/api/v1/invoices",
+      createDocumentExportRouter({ documentExportService, authService }),
+    );
+  }
+
+  if (autoInvestRulesService) {
+    app.use(
+      "/api/v1/auto-invest",
+      createAutoInvestRouter({ autoInvestRulesService, authService }),
+    );
   }
 
   app.use(notFoundMiddleware);

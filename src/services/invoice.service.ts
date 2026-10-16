@@ -1,6 +1,7 @@
 import { DataSource } from "typeorm";
 import { Invoice } from "../models/Invoice.model";
 import { User } from "../models/User.model";
+import { InvoiceDocument } from "../models/InvoiceDocument.model";
 import { InvoiceStatus, KYCStatus } from "../types/enums";
 import { ServiceError } from "../utils/service-error";
 import { validateInvoiceForPublish } from "../lib/validate-invoice-for-publish";
@@ -20,9 +21,20 @@ export interface InvoiceRepositoryContract {
   create(data: Partial<Invoice>): Invoice;
 }
 
+export interface InvoiceDocumentRepositoryContract {
+  save(document: Partial<InvoiceDocument>): Promise<InvoiceDocument>;
+}
+
 export interface InvoiceServiceDependencies {
   invoiceRepository: InvoiceRepositoryContract;
   ipfsService: IPFSService;
+  /** Optional: when provided, `uploadDocument` also records the upload here
+   * (issue #589's bulk export reads from this table). Omitted by existing
+   * callers/tests keeps the previous single-`ipfsHash` behaviour unchanged. */
+  invoiceDocumentRepository?: InvoiceDocumentRepositoryContract;
+  /** Notified with the invoice once it goes PUBLISHED, so auto-invest rules
+   * can be evaluated against it (issue #596). */
+  onInvoicePublished?: (invoice: Invoice) => void;
 }
 
 export interface UploadDocumentInput {
@@ -31,6 +43,7 @@ export interface UploadDocumentInput {
   fileBuffer: Buffer;
   filename: string;
   mimeType: string;
+  docType?: string;
 }
 
 export interface UploadDocumentResult {
@@ -105,10 +118,14 @@ const VALID_TRANSITIONS: Record<InvoiceStatus, InvoiceStatus[]> = {
 export class InvoiceService {
   private readonly invoiceRepository: InvoiceRepositoryContract;
   private readonly ipfsService: IPFSService;
+  private readonly invoiceDocumentRepository?: InvoiceDocumentRepositoryContract;
+  private readonly onInvoicePublished?: (invoice: Invoice) => void;
 
   constructor(dependencies: InvoiceServiceDependencies) {
     this.invoiceRepository = dependencies.invoiceRepository;
     this.ipfsService = dependencies.ipfsService;
+    this.invoiceDocumentRepository = dependencies.invoiceDocumentRepository;
+    this.onInvoicePublished = dependencies.onInvoicePublished;
   }
 
   /**
@@ -358,6 +375,7 @@ export class InvoiceService {
 
     invoice.status = InvoiceStatus.PUBLISHED;
     const updated = await this.invoiceRepository.save(invoice);
+    this.onInvoicePublished?.(updated);
     return this.toDTO(updated);
   }
 
@@ -394,6 +412,21 @@ export class InvoiceService {
     invoice.ipfsHash = uploadResult.hash;
     await this.invoiceRepository.save(invoice);
 
+    // Also record it as one of possibly several documents on this invoice
+    // (issue #589's bulk export reads from this table). Best-effort: a
+    // document-tracking failure must not roll back an upload that already
+    // succeeded against IPFS and the invoice's own ipfsHash.
+    if (this.invoiceDocumentRepository) {
+      await this.invoiceDocumentRepository.save({
+        invoiceId: input.invoiceId,
+        cid: uploadResult.hash,
+        docType: input.docType ?? "general",
+        filename: input.filename,
+        mimeType: input.mimeType,
+        fileSize: uploadResult.size,
+      });
+    }
+
     return {
       invoiceId: input.invoiceId,
       ipfsHash: uploadResult.hash,
@@ -427,12 +460,16 @@ export class InvoiceService {
 
 export function createInvoiceService(
   dataSource: DataSource,
-  ipfsService: IPFSService
+  ipfsService: IPFSService,
+  onInvoicePublished?: (invoice: Invoice) => void,
 ): InvoiceService {
   const invoiceRepository = dataSource.getRepository(Invoice);
+  const invoiceDocumentRepository = dataSource.getRepository(InvoiceDocument);
 
   return new InvoiceService({
     invoiceRepository,
     ipfsService,
+    invoiceDocumentRepository,
+    onInvoicePublished,
   });
 }
