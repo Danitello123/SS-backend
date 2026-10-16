@@ -48,6 +48,7 @@ import { createSwapRouter } from "./routes/swap.routes";
 import { createRoyaltiesRouter } from "./routes/royalties.routes";
 import { createSubscriptionsRouter } from "./routes/subscriptions.routes";
 import { createOnboardingRouter } from "./routes/onboarding.routes";
+import { createCommunityProgramsRouter } from "./routes/community-programs.routes";
 
 import type { AuthService } from "./services/auth.service";
 import type { NotificationService } from "./services/notification.service";
@@ -394,6 +395,7 @@ export function createApp({
 
   app.use("/api/v1/auth", createAuthRouter(authService, appLogger));
   app.use("/auth", createAuthRouter(authService, appLogger));
+  app.use("/api/v1", createCommunityProgramsRouter(dataSource, authService));
 
   if (kycService) {
     app.use("/api/v1/kyc", createKycRouter(kycService, authService));
