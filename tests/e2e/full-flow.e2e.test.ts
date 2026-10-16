@@ -256,6 +256,7 @@ describe("E2E: Complete Invoice Financing Flow", () => {
   let investmentId: string;
 
   beforeAll(async () => {
+    const setupStartedAt = Date.now();
     try {
       // Generate Stellar keypairs for seller and investor
       sellerKeypair = Keypair.random();
@@ -355,7 +356,8 @@ describe("E2E: Complete Invoice Financing Flow", () => {
 
       await dataSource.initialize();
 
-      logger.info("E2E test database initialized successfully");
+      const dbInitMs = Date.now() - setupStartedAt;
+      logger.info("E2E test database initialized successfully", { durationMs: dbInitMs });
 
       // Create services with mocked IPFS
       const authService = createAuthService(dataSource, config, logger);
@@ -378,9 +380,12 @@ describe("E2E: Complete Invoice Financing Flow", () => {
         metricsEnabled: false,
       });
 
-      logger.info("E2E test app created successfully");
+      logger.info("E2E test app created successfully", {
+        durationMs: Date.now() - setupStartedAt,
+      });
     } catch (error) {
       logger.error("E2E test harness failed to initialize", {
+        durationMs: Date.now() - setupStartedAt,
         error: error instanceof Error ? error.message : String(error),
       });
       throw error;
