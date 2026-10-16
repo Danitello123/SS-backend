@@ -694,17 +694,17 @@ describe("InvoiceService", () => {
       );
     });
 
-    it("should allow deleting a cancelled invoice", async () => {
+    it("should reject deleting a cancelled invoice", async () => {
       mockInvoiceRepository.findOne.mockResolvedValue(
         buildInvoice({ status: InvoiceStatus.CANCELLED })
       );
       mockInvoiceRepository.save.mockImplementation(async (invoice: Invoice) => invoice);
 
-      await invoiceService.deleteInvoice("invoice-123", "seller-456");
-
-      expect(mockInvoiceRepository.save).toHaveBeenCalledWith(
-        expect.objectContaining({ deletedAt: expect.any(Date) })
-      );
+      await expect(invoiceService.deleteInvoice("invoice-123", "seller-456")).rejects.toMatchObject({
+        code: "invalid_invoice_status",
+        statusCode: 400,
+      });
+      expect(mockInvoiceRepository.save).not.toHaveBeenCalled();
     });
 
     it("should return 404 when the invoice does not exist", async () => {
