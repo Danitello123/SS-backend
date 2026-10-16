@@ -178,10 +178,6 @@ describe("InvoiceService", () => {
       mockInvoiceRepository.findOneBy.mockResolvedValue(mockInvoice);
       const creation = invoiceService.createInvoice(buildCreateInput());
 
-      await expect(invoiceService.createInvoice(buildCreateInput())).rejects.toThrow(ServiceError);
-
-      await expect(invoiceService.createInvoice(buildCreateInput())).rejects.toMatchObject({
-      await expect(creation).rejects.toBeInstanceOf(ServiceError);
       await expect(creation).rejects.toMatchObject({
         code: "invoice_number_exists",
         statusCode: 409,
