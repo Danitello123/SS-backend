@@ -2,7 +2,7 @@ import { IsNull } from "typeorm";
 import { InvoiceService } from "../src/services/invoice.service";
 import { ServiceError } from "../src/utils/service-error";
 import { Invoice } from "../src/models/Invoice.model";
-import { InvoiceStatus } from "../src/types/enums";
+import { InvoiceStatus, KYCStatus } from "../src/types/enums";
 import { logger } from "../src/observability/logger";
 
 describe("InvoiceService", () => {
