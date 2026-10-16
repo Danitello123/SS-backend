@@ -2,7 +2,7 @@ import { IsNull } from "typeorm";
 import { InvoiceService } from "../src/services/invoice.service";
 import { ServiceError } from "../src/utils/service-error";
 import { Invoice } from "../src/models/Invoice.model";
-import { InvoiceStatus } from "../src/types/enums";
+import { InvoiceStatus, KYCStatus } from "../src/types/enums";
 import { logger } from "../src/observability/logger";
 
 describe("InvoiceService", () => {
@@ -178,10 +178,6 @@ describe("InvoiceService", () => {
       mockInvoiceRepository.findOneBy.mockResolvedValue(mockInvoice);
       const creation = invoiceService.createInvoice(buildCreateInput());
 
-      await expect(invoiceService.createInvoice(buildCreateInput())).rejects.toThrow(ServiceError);
-
-      await expect(invoiceService.createInvoice(buildCreateInput())).rejects.toMatchObject({
-      await expect(creation).rejects.toBeInstanceOf(ServiceError);
       await expect(creation).rejects.toMatchObject({
         code: "invoice_number_exists",
         statusCode: 409,
@@ -698,17 +694,17 @@ describe("InvoiceService", () => {
       );
     });
 
-    it("should allow deleting a cancelled invoice", async () => {
+    it("should reject deleting a cancelled invoice", async () => {
       mockInvoiceRepository.findOne.mockResolvedValue(
         buildInvoice({ status: InvoiceStatus.CANCELLED })
       );
       mockInvoiceRepository.save.mockImplementation(async (invoice: Invoice) => invoice);
 
-      await invoiceService.deleteInvoice("invoice-123", "seller-456");
-
-      expect(mockInvoiceRepository.save).toHaveBeenCalledWith(
-        expect.objectContaining({ deletedAt: expect.any(Date) })
-      );
+      await expect(invoiceService.deleteInvoice("invoice-123", "seller-456")).rejects.toMatchObject({
+        code: "invalid_invoice_status",
+        statusCode: 400,
+      });
+      expect(mockInvoiceRepository.save).not.toHaveBeenCalled();
     });
 
     it("should return 404 when the invoice does not exist", async () => {
@@ -1140,6 +1136,7 @@ describe("InvoiceService", () => {
         );
         expect(stateMachine.dispatch).toHaveBeenCalledTimes(1);
       });
+    });
   // ============ REPOSITORY ERROR HANDLING ============
   describe("repository error handling", () => {
     it("should return a service error and log when invoice listing fails", async () => {
@@ -1162,8 +1159,9 @@ describe("InvoiceService", () => {
       mockInvoiceRepository.findOneBy.mockResolvedValue(null);
       mockInvoiceRepository.create.mockReturnValue(mockInvoice);
       mockInvoiceRepository.save.mockRejectedValue(new Error("Connection refused"));
+    });
 
-      it("should record a null actor when the admin is unknown", async () => {
+    it("should record a null actor when the admin is unknown", async () => {
         mockInvoiceRepository.findOne.mockResolvedValue(mockInvoice);
 
         await service.rejectInvoice({ invoiceId: "invoice-123", rejectionReason: "No PO" });

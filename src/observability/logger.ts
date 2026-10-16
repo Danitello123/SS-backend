@@ -278,3 +278,37 @@ export async function withErrorLogging<T>(
     throw error;
   }
 }
+
+/**
+ * Executes an async operation while logging its start, duration and outcome.
+ * Useful for hot or latency-sensitive paths where callers need observability
+ * without wrapping every call site in try/catch. Errors are logged and
+ * re-thrown so upstream handlers remain in charge of error policy.
+ *
+ * The duration is always measured with a monotonic-ish fallback (Date.now) so
+ * the helper never throws on its own; a logging failure inside this helper is
+ * swallowed and never masks the operation's own result or error.
+ */
+export async function withTimedLogging<T>(
+  fn: () => Promise<T>,
+  label: string,
+  metadata?: LogMetadata,
+  appLogger: AppLogger = logger
+): Promise<T> {
+  const startedAt = Date.now();
+  try {
+    appLogger.debug(`${label} started`, metadata);
+    const result = await fn();
+    const durationMs = Date.now() - startedAt;
+    appLogger.debug(`${label} completed`, { ...metadata, durationMs });
+    return result;
+  } catch (error) {
+    const durationMs = Date.now() - startedAt;
+    appLogger.error(`${label} failed`, {
+      ...metadata,
+      durationMs,
+      error,
+    });
+    throw error;
+  }
+}

@@ -612,11 +612,11 @@ export class InvoiceService {
         );
       }
 
-      // Only draft and cancelled invoices can be deleted
-      if (invoice.status !== InvoiceStatus.DRAFT && invoice.status !== InvoiceStatus.CANCELLED) {
+      // Only draft invoices can be deleted
+      if (invoice.status !== InvoiceStatus.DRAFT) {
         throw new ServiceError(
           "invalid_invoice_status",
-          `Cannot delete invoice in ${invoice.status} status`,
+          `Cannot delete invoice in ${invoice.status} status. Only draft invoices can be deleted.`,
           400
         );
       }
