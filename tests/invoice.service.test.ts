@@ -1136,6 +1136,7 @@ describe("InvoiceService", () => {
         );
         expect(stateMachine.dispatch).toHaveBeenCalledTimes(1);
       });
+    });
   // ============ REPOSITORY ERROR HANDLING ============
   describe("repository error handling", () => {
     it("should return a service error and log when invoice listing fails", async () => {
@@ -1216,6 +1217,7 @@ describe("InvoiceService", () => {
         expect(stateMachine.dispatch).not.toHaveBeenCalled();
       });
     });
+  });
 
     describe("submitInvoiceForReview", () => {
       it("should move a draft to pending on behalf of its seller", async () => {
