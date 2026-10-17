@@ -17,6 +17,7 @@ import Decimal from "decimal.js";
 import { InvoiceStatus } from "../types/enums";
 import { logger } from "../observability/logger";
 import { AppError } from "../utils/http-error";
+import { isPastDueDate } from "../utils/date.utils";
 
 /**
  * Frozen state transition map optimized for performance.
@@ -553,8 +554,7 @@ export class Invoice {
     if (!invoice.dueDate) return false;
 
     try {
-      const dueTime = new Date(invoice.dueDate).getTime();
-      return !isNaN(dueTime) && dueTime < referenceDate.getTime();
+      return isPastDueDate(invoice.dueDate, referenceDate);
     } catch {
       logger.warn("Invalid due date when checking overdue status", { invoiceId: invoice.id });
       return false;
@@ -614,7 +614,7 @@ export class Invoice {
    * Evaluates if the invoice due date has passed.
    */
   isExpired(referenceDate: Date = new Date()): boolean {
-    return this.dueDate ? new Date(this.dueDate).getTime() < referenceDate.getTime() : false;
+    return this.dueDate ? isPastDueDate(this.dueDate, referenceDate) : false;
   }
 
   /**

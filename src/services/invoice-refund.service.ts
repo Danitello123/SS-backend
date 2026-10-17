@@ -1,4 +1,4 @@
-import { Repository, LessThan } from "typeorm";
+import { Repository, LessThan, In } from "typeorm";
 import { Invoice } from "../models/Invoice.model";
 import { Investment } from "../models/Investment.model";
 import { InvoiceStatus } from "../types/enums";
@@ -84,8 +84,18 @@ export class InvoiceRefundService {
   async getRefundableInvoices(_walletAddress: string): Promise<Invoice[]> {
     const now = new Date();
 
+    // Scope to invoices this wallet actually invested in - without this
+    // filter every investor's refund list leaked every other investor's
+    // expired-but-unfunded invoices.
+    const investments = await this.investmentRepo.find({
+      where: { investorWallet: walletAddress },
+    });
+    const invoiceIds = [...new Set(investments.map((investment) => investment.invoiceId))];
+    if (invoiceIds.length === 0) return [];
+
     return this.invoiceRepo.find({
       where: {
+        id: In(invoiceIds),
         fundingDeadline: LessThan(now),
         status: InvoiceStatus.PUBLISHED,
       },

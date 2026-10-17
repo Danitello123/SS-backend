@@ -12,6 +12,10 @@ export interface RefundRouterDependencies {
   refundService: InvoiceRefundService;
 }
 
+interface RefundInvoiceParamsRequest extends AuthenticatedRequest {
+  params: { invoiceId: string };
+}
+
 export function createRefundRouter({
   authService,
   refundService,
@@ -23,10 +27,10 @@ export function createRefundRouter({
     "/:invoiceId/refund",
     auth,
     requireInvestor(),
-    async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    async (req: RefundInvoiceParamsRequest, res: Response, next: NextFunction) => {
       try {
-        const invoiceId = String(req.params.invoiceId);
-        const wallet = req.user?.stellarAddress || (req.user as unknown as { wallet?: string })?.wallet;
+        const { invoiceId } = req.params;
+        const wallet = req.user?.stellarAddress;
 
         if (!wallet) {
           throw new HttpError(401, "Wallet not found in request");
@@ -60,7 +64,7 @@ export function createRefundRouter({
     requireInvestor(),
     async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
       try {
-        const wallet = req.user?.stellarAddress || (req.user as unknown as { wallet?: string })?.wallet;
+        const wallet = req.user?.stellarAddress;
 
         if (!wallet) {
           throw new HttpError(401, "Wallet not found in request");
