@@ -48,6 +48,11 @@ import { createSecondaryMarketService } from "./services/secondary-market.servic
 import { createWatchlistService } from "./services/watchlist.service";
 import { createSettlementWorker } from "./workers/settlement.worker";
 import { scheduleAnalyticsSnapshotJob } from "./workers/analytics-snapshot.worker";
+import { createFeeScheduleService } from "./services/fee-schedule.service";
+import { getRedisClient } from "./config/redis";
+import { createIssuerReputationService } from "./services/issuer-reputation.service";
+import { createInvestorRiskProfileService } from "./services/investor-risk-profile.service";
+import { createInvoiceDraftService } from "./services/invoice-draft.service";
 
 export async function bootstrap(): Promise<{
   server: Server;
@@ -86,11 +91,22 @@ export async function bootstrap(): Promise<{
     dataSource,
     stateMachine: invoiceStateMachine,
   });
+  // ---- Feature: Issuer Reputation (issue #593) ----
+  const issuerReputationService = createIssuerReputationService(dataSource);
+
+  // ---- Feature: Investor Risk Profile (issue #595) ----
+  const investorRiskProfileService = createInvestorRiskProfileService(dataSource);
+
   const investmentService = createInvestmentService(
     dataSource,
     invoiceStateMachine,
-    createInvestmentNotifier(notificationService, logger)
+    createInvestmentNotifier(notificationService, logger),
+    investorRiskProfileService
   );
+
+  // ---- Feature: Invoice Draft Autosave (issue #594) ----
+  const draftService = createInvoiceDraftService(dataSource);
+
   const sorobanConfig = getSorobanConfig();
 
   const distributor =
@@ -123,7 +139,8 @@ export async function bootstrap(): Promise<{
     distributorConfig,
     invoiceStateMachine,
     undefined,
-    notificationService
+    notificationService,
+    issuerReputationService
   );
   
   const adminSettlementService =
@@ -185,6 +202,9 @@ export async function bootstrap(): Promise<{
   // ---- Feature: Settlement Worker ----
   const settlementWorker = createSettlementWorker(dataSource, settlementService);
 
+  // ---- Feature: Fee Schedule Management (issue #592) ----
+  const feeScheduleService = createFeeScheduleService(dataSource, getRedisClient());
+
   const app = createApp({
     authService,
     notificationService,
@@ -210,6 +230,10 @@ export async function bootstrap(): Promise<{
     watchlistService,
     settlementWorker,
     invoiceEscrowContractService: invoiceEscrowContract,
+    feeScheduleService,
+    issuerReputationService,
+    investorRiskProfileService,
+    draftService,
     config,
     logger,
     metricsEnabled: config.observability.metricsEnabled,

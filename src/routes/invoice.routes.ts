@@ -30,6 +30,8 @@ import type { InvoiceSearchService } from "../services/invoice-search.service";
 import { createInvoiceSearchHandler } from "./invoice-search.routes";
 import { ServiceError } from "../utils/service-error";
 import type { AuthenticatedRequest } from "../types/auth";
+import { createInvoiceDraftsRouter } from "./invoices/drafts.routes";
+import type { InvoiceDraftService } from "../services/invoice-draft.service";
 
 export interface InvoiceRouterDependencies {
   invoiceService: InvoiceService;
@@ -44,6 +46,8 @@ export interface InvoiceRouterDependencies {
   invoiceSearchService?: InvoiceSearchService;
   /** Issue #477 — seller funding deadline extension requests. */
   extensionService?: InvoiceExtensionService;
+  /** Issue #594 — invoice draft autosave. */
+  draftService?: InvoiceDraftService;
 }
 
 /**
@@ -226,6 +230,7 @@ export function createInvoiceRouter({
   cacheService,
   invoiceSearchService,
   extensionService,
+  draftService,
 }: InvoiceRouterDependencies): Router {
   const router = Router();
   const cache =
@@ -461,6 +466,11 @@ export function createInvoiceRouter({
         }
       }
     );
+  }
+
+  // ---- Invoice Drafts (issue #594) ----
+  if (draftService && authService) {
+    router.use("/", createInvoiceDraftsRouter({ draftService, authService }));
   }
 
   return router;
