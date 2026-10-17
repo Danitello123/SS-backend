@@ -81,6 +81,8 @@ export enum NotificationType {
   REFUND_PROCESSED = "refund_processed",
   SECONDARY_MARKET_SOLD = "secondary_market_sold",
   KYC_STATUS_CHANGE = "kyc_status_change",
+  SUBSCRIPTION = "subscription",
+  SUBSCRIPTION_EXPIRING = "subscription_expiring",
 }
 
 /** Seller funding-deadline extension request lifecycle (issue #477). */
