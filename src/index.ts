@@ -271,6 +271,7 @@ export async function bootstrap(): Promise<{
           logger,
           lagAlertThresholdLedgers: config.sorobanIndexer.lagAlertThresholdLedgers,
           eventBus: projections.eventBus,
+          settlementService,
         })
       : undefined;
 

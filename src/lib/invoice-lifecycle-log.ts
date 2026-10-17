@@ -11,6 +11,7 @@ export type InvoiceTransitionReason =
   | "admin_cancelled"
   | "fully_funded"
   | "admin_settled"
+  | "soroban_settled"
   | "admin_rejected"
   | "maturity_settled"
   | "maturity_underfunded";

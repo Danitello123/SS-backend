@@ -46,6 +46,8 @@ export interface SettleInvoiceInput {
   /** Recorded in the status history; defaults to `admin_settled`. */
   trigger?: InvoiceTransitionReason;
   sellerId?: string;
+  /** The payout was already confirmed on-chain; do not submit it again. */
+  onChainTransactionHash?: string;
 }
 
 export interface PaymentDistributorSettlementConfig {
@@ -193,6 +195,7 @@ export class SettlementService {
       actorWallet,
       sellerId,
       trigger = "admin_settled",
+      onChainTransactionHash,
     } = input;
 
     const proceeds = new Decimal(proceedsInput);
@@ -283,9 +286,9 @@ export class SettlementService {
             : 0n;
           const distributableScaled = proceedsScaled - feeScaled;
           const settlements: InvestorSettlement[] = [];
-          let distributionTransactionHash: string | undefined;
+          let distributionTransactionHash = onChainTransactionHash;
 
-          if (this.paymentDistributor) {
+          if (this.paymentDistributor && !onChainTransactionHash) {
             if (!this.distributorConfig) {
               throw new ServiceError(
                 "DISTRIBUTOR_CONFIGURATION_MISSING",
@@ -308,6 +311,9 @@ export class SettlementService {
               })),
             });
             distributionTransactionHash = distribution.transactionHash;
+          }
+
+          if (distributionTransactionHash) {
             await transactionalEntityManager.save(
               Transaction,
               transactionalEntityManager.create(Transaction, {
@@ -316,7 +322,7 @@ export class SettlementService {
                 investmentId: null,
                 type: TransactionType.PAYMENT,
                 amount: proceeds.toFixed(4),
-                stellarTxHash: distribution.transactionHash,
+                stellarTxHash: distributionTransactionHash,
                 stellarOperationIndex: 0,
                 status: TransactionStatus.COMPLETED,
               })
@@ -381,7 +387,7 @@ export class SettlementService {
             entityManagerTransitionStore(transactionalEntityManager),
             invoice,
             InvoiceStatus.SETTLED,
-            { actor: { role: "system", wallet: actorWallet }, trigger }
+            { actor: { role: "system", wallet: actorWallet || undefined }, trigger }
           );
 
           const eventPayload: SettlementEventPayload = {

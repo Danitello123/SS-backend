@@ -9,6 +9,7 @@ import { SorobanIndexerCheckpoint } from "../../models/SorobanIndexerCheckpoint.
 import { InvestmentStatus, InvoiceStatus } from "../../types/enums";
 import type { DecodedSorobanEvent } from "../../types/soroban.types";
 import type { ContractEventBus } from "../contract-event-bus.service";
+import { createSettlementService, type SettlementService } from "../settlement.service";
 
 export interface EventIndexerServiceDependencies {
   contractIds: string[];
@@ -20,6 +21,7 @@ export interface EventIndexerServiceDependencies {
   checkpointRepository?: Repository<SorobanIndexerCheckpoint>;
   invoiceRepository?: Repository<Invoice>;
   investmentRepository?: Repository<Investment>;
+  settlementService?: Pick<SettlementService, "settleInvoice">;
   lagAlertThresholdLedgers?: number;
   /**
    * Optional fan-out for read-model projections derived from contract events
@@ -44,6 +46,7 @@ export class EventIndexerService {
   private readonly checkpointRepository?: Repository<SorobanIndexerCheckpoint>;
   private readonly invoiceRepository?: Repository<Invoice>;
   private readonly investmentRepository?: Repository<Investment>;
+  private readonly settlementService?: Pick<SettlementService, "settleInvoice">;
   private readonly lagAlertThresholdLedgers: number;
   private readonly eventBus?: ContractEventBus;
   private intervalHandle: NodeJS.Timeout | null = null;
@@ -60,6 +63,9 @@ export class EventIndexerService {
     this.contractIds = dependencies.contractIds;
     this.logger = dependencies.logger ?? globalLogger;
     this.dataSource = dependencies.dataSource;
+    this.settlementService =
+      dependencies.settlementService ??
+      (this.dataSource ? createSettlementService(this.dataSource) : undefined);
     this.lagAlertThresholdLedgers = dependencies.lagAlertThresholdLedgers ?? 100;
     this.eventBus = dependencies.eventBus;
 
@@ -326,8 +332,34 @@ export class EventIndexerService {
    */
   private async applyEventStateTransition(event: DecodedSorobanEvent): Promise<void> {
     const topic = event.topic.toLowerCase();
-    const investment = await this.findInvestmentForEvent(event);
     const invoiceId = this.extractInvoiceId(event);
+
+    if (
+      ["settle_escrow", "settle", "payment_recorded", "payment", "investment_settled"].includes(
+        topic
+      )
+    ) {
+      if (!invoiceId) {
+        throw new Error(`Soroban settlement event ${event.id} does not include an invoice ID.`);
+      }
+      if (!this.settlementService) {
+        throw new Error("Settlement service is required to process Soroban settlement events.");
+      }
+      if (!event.txHash.trim()) {
+        throw new Error(`Soroban settlement event ${event.id} does not include a transaction hash.`);
+      }
+
+      await this.settlementService.settleInvoice({
+        invoiceId,
+        proceeds: this.extractSettlementProceeds(event),
+        actorWallet: "",
+        trigger: "soroban_settled",
+        onChainTransactionHash: event.txHash,
+      });
+      return;
+    }
+
+    const investment = await this.findInvestmentForEvent(event);
 
     if (
       investment &&
@@ -337,28 +369,6 @@ export class EventIndexerService {
       investment.status = InvestmentStatus.CONFIRMED;
       investment.transactionHash = event.txHash;
       investment.fundingBlock = String(event.ledger);
-      await this.investmentRepository?.save(investment);
-    }
-
-    if (
-      invoiceId &&
-      ["settle_escrow", "settle", "payment_recorded", "payment", "investment_settled"].includes(
-        topic
-      ) &&
-      this.investmentRepository
-    ) {
-      await this.investmentRepository.update(
-        { invoiceId, status: In([InvestmentStatus.PENDING, InvestmentStatus.CONFIRMED]) },
-        { status: InvestmentStatus.SETTLED }
-      );
-    }
-
-    if (
-      investment &&
-      ["settle_escrow", "settle", "investment_settled"].includes(topic) &&
-      investment.status !== InvestmentStatus.SETTLED
-    ) {
-      investment.status = InvestmentStatus.SETTLED;
       await this.investmentRepository?.save(investment);
     }
 
@@ -385,30 +395,58 @@ export class EventIndexerService {
         }
       }
     }
+  }
 
-    // Event: "payment_recorded" or "payment"
-    if (topic === "payment_recorded" || topic === "payment") {
-      const invoiceId = this.extractInvoiceId(event);
-      if (invoiceId && this.invoiceRepository) {
-        const invoice = await this.invoiceRepository.findOne({ where: { id: invoiceId } });
-        if (invoice && invoice.status === InvoiceStatus.FUNDED) {
-          invoice.status = InvoiceStatus.SETTLED;
-          await this.invoiceRepository.save(invoice);
-        }
-      }
+  private extractSettlementProceeds(event: DecodedSorobanEvent): string {
+    const rawData = event.data;
+    const data =
+      rawData && typeof rawData === "object" && !Array.isArray(rawData)
+        ? (rawData as Record<string, unknown>)
+        : {};
+    const stroopsValue =
+      data.proceeds_stroops ??
+      data.proceedsStroops ??
+      data.amount_stroops ??
+      data.amountStroops;
+    const proceedsValue =
+      stroopsValue ??
+      data.proceeds ??
+      data.settlement_amount ??
+      data.settlementAmount ??
+      data.total_amount ??
+      data.totalAmount ??
+      data.amount ??
+      (typeof rawData === "string" ||
+      typeof rawData === "number" ||
+      typeof rawData === "bigint"
+        ? rawData
+        : undefined);
+
+    if (
+      (typeof proceedsValue !== "string" &&
+        typeof proceedsValue !== "number" &&
+        typeof proceedsValue !== "bigint") ||
+      String(proceedsValue).trim().length === 0
+    ) {
+      throw new Error(`Soroban settlement event ${event.id} does not include proceeds.`);
     }
 
-    // Event: "settle_escrow" or "settle"
-    if (topic === "settle_escrow" || topic === "settle") {
-      const invoiceId = this.extractInvoiceId(event);
-      if (invoiceId && this.invoiceRepository) {
-        const invoice = await this.invoiceRepository.findOne({ where: { id: invoiceId } });
-        if (invoice) {
-          invoice.status = InvoiceStatus.SETTLED;
-          await this.invoiceRepository.save(invoice);
-        }
+    const value = String(proceedsValue).trim();
+    if (stroopsValue !== undefined || /^-?\d+$/.test(value)) {
+      let stroops: bigint;
+      try {
+        stroops = BigInt(value);
+      } catch (error) {
+        throw new Error(`Soroban settlement event ${event.id} has invalid proceeds.`, {
+          cause: error,
+        });
       }
+      const whole = stroops / 10_000_000n;
+      const fraction = (stroops % 10_000_000n).toString().padStart(7, "0");
+      return `${whole}.${fraction}`;
     }
+
+    return value;
   }
 
   private async findInvestmentForEvent(event: DecodedSorobanEvent): Promise<Investment | null> {

@@ -205,12 +205,13 @@ describe("EventIndexerService (Issue #135)", () => {
     });
 
     it("should ingest payment_recorded event and transition invoice to REPAID", async () => {
-      mockInvoiceRepo.findOne.mockResolvedValue({ id: "INV-100", status: InvoiceStatus.FUNDED });
+      const settlementService = { settleInvoice: jest.fn() };
 
       const service = new EventIndexerService({
         contractIds: [ESCROW_CONTRACT_ID],
         eventLogRepository: mockEventLogRepo,
         invoiceRepository: mockInvoiceRepo,
+        settlementService,
         logger: mockLogger,
       });
 
@@ -222,23 +223,30 @@ describe("EventIndexerService (Issue #135)", () => {
         txHash: "0x789",
         topic: "payment_recorded",
         topics: ["payment_recorded", "INV-100"],
-        data: null,
+        data: { proceeds: "5000000000" },
         inSuccessfulContractCall: true,
       };
 
       await service.ingestEvents([decodedEvent]);
-      expect(mockInvoiceRepo.save).toHaveBeenCalledWith(
-        expect.objectContaining({ id: "INV-100", status: InvoiceStatus.SETTLED })
+      expect(settlementService.settleInvoice).toHaveBeenCalledWith(
+        expect.objectContaining({
+          invoiceId: "INV-100",
+          proceeds: "500.0000000",
+          actorWallet: "",
+          trigger: "soroban_settled",
+          onChainTransactionHash: "0x789",
+        })
       );
     });
 
     it("should ingest settle_escrow event and transition invoice to SETTLED", async () => {
-      mockInvoiceRepo.findOne.mockResolvedValue({ id: "INV-100", status: InvoiceStatus.FUNDED });
+      const settlementService = { settleInvoice: jest.fn() };
 
       const service = new EventIndexerService({
         contractIds: [ESCROW_CONTRACT_ID],
         eventLogRepository: mockEventLogRepo,
         invoiceRepository: mockInvoiceRepo,
+        settlementService,
         logger: mockLogger,
       });
 
@@ -250,13 +258,19 @@ describe("EventIndexerService (Issue #135)", () => {
         txHash: "0xabc",
         topic: "settle_escrow",
         topics: ["settle_escrow", "INV-100"],
-        data: null,
+        data: { proceeds: "5000000000" },
         inSuccessfulContractCall: true,
       };
 
       await service.ingestEvents([decodedEvent]);
-      expect(mockInvoiceRepo.save).toHaveBeenCalledWith(
-        expect.objectContaining({ id: "INV-100", status: InvoiceStatus.SETTLED })
+      expect(settlementService.settleInvoice).toHaveBeenCalledWith(
+        expect.objectContaining({
+          invoiceId: "INV-100",
+          proceeds: "500.0000000",
+          actorWallet: "",
+          trigger: "soroban_settled",
+          onChainTransactionHash: "0xabc",
+        })
       );
     });
 
