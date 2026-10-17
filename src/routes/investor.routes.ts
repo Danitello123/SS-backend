@@ -5,7 +5,7 @@ import type { InvestorAcknowledgementService } from "../services/investor-acknow
 import type { AuthenticatedRequest } from "../types/auth";
 import { ServiceError } from "../utils/service-error";
 import { HttpError, PublicAppError } from "../utils/http-error";
-import type { InvestorRiskProfileService } from "../services/investor-risk-profile.service";
+import type { InvestorRiskProfileService } from "@/services/investor-risk-profile.service";
 
 export interface InvestorRouterDependencies {
   authService: AuthService;
