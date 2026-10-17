@@ -1,5 +1,5 @@
 import { Router, type Response, type NextFunction } from "express";
-import { createAuthMiddleware, requireInvestor, requireAdmin } from "../middleware/auth.middleware";
+import { createAuthMiddleware, requireAdmin } from "../middleware/auth.middleware";
 import type { AuthService } from "../services/auth.service";
 import type { InvestorAccreditationService } from "../services/investor-accreditation.service";
 import type { AuthenticatedRequest } from "../types/auth";
@@ -23,7 +23,7 @@ export function createAccreditationRouter({
     auth,
     async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
       try {
-        const { wallet } = req.params;
+        const wallet = String(req.params.wallet);
         const accreditation = await accreditationService.getAccreditation(wallet);
 
         res.json({
@@ -44,11 +44,11 @@ export function createAccreditationRouter({
     requireAdmin(),
     async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
       try {
-        const { wallet } = req.params;
+        const wallet = String(req.params.wallet);
         const { tier, verificationSource } = req.body;
 
         if (!Object.values(AccreditationTier).includes(tier)) {
-          throw new HttpError("Invalid tier", 400);
+          throw new HttpError(400, "Invalid tier");
         }
 
         const accreditation = await accreditationService.updateAccreditation(
@@ -74,7 +74,8 @@ export function createAccreditationRouter({
     auth,
     async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
       try {
-        const { wallet, invoiceId } = req.params;
+        const wallet = String(req.params.wallet);
+        const invoiceId = String(req.params.invoiceId);
         const eligibility = await accreditationService.checkEligibility(
           wallet,
           invoiceId

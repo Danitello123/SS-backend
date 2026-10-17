@@ -48,6 +48,10 @@ import { createSecondaryMarketService } from "./services/secondary-market.servic
 import { createWatchlistService } from "./services/watchlist.service";
 import { createSettlementWorker } from "./workers/settlement.worker";
 import { scheduleAnalyticsSnapshotJob } from "./workers/analytics-snapshot.worker";
+import {
+  scheduleSubscriptionExpiryJob,
+  buildSubscriptionExpiryNotifier,
+} from "./workers/subscription-expiry.worker";
 import { createFeeScheduleService } from "./services/fee-schedule.service";
 import { getRedisClient } from "./config/redis";
 import { createIssuerReputationService } from "./services/issuer-reputation.service";
