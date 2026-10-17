@@ -469,6 +469,28 @@ describe("POST /invoices/:id/invest (#465)", () => {
       ).rejects.toMatchObject({ code, statusCode });
     });
 
+    it("accepts an investment on a date-only due date before that day has fully elapsed", async () => {
+      // Postgres `date` columns come back from TypeORM as a bare "YYYY-MM-DD"
+      // string, which `new Date(...)` parses as that day's midnight UTC.
+      // Comparing against "now" directly would mark the invoice expired as
+      // soon as the due date arrives, hours before the day is actually over.
+      const todayUTC = new Date().toISOString().slice(0, 10);
+      const invoice = makeInvoice({ dueDate: todayUTC as unknown as Date });
+
+      await expect(
+        createService(createFakeDatabase(invoice)).investInInvoice(investInput(invoice))
+      ).resolves.toBeDefined();
+    });
+
+    it("rejects an investment once a date-only due date's day has fully elapsed", async () => {
+      const yesterdayUTC = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      const invoice = makeInvoice({ dueDate: yesterdayUTC as unknown as Date });
+
+      await expect(
+        createService(createFakeDatabase(invoice)).investInInvoice(investInput(invoice))
+      ).rejects.toMatchObject({ code: "invoice_expired", statusCode: 422 });
+    });
+
     it("rejects the seller investing in their own invoice", async () => {
       const invoice = makeInvoice();
       await expect(
