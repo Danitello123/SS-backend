@@ -79,6 +79,8 @@ export enum NotificationType {
   INVOICE_MATURED = "invoice_matured",
   SETTLEMENT_RECEIVED = "settlement_received",
   REFUND_PROCESSED = "refund_processed",
+  SECONDARY_MARKET_SOLD = "secondary_market_sold",
+  KYC_STATUS_CHANGE = "kyc_status_change",
 }
 
 /** Seller funding-deadline extension request lifecycle (issue #477). */
