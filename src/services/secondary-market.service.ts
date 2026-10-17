@@ -388,7 +388,14 @@ export class SecondaryMarketService {
     // Fire notification after transaction commits — never throw out of here
     if (wasSold && this.notificationService) {
       try {
-        const userId = soldSellerId ?? soldSellerWallet!;
+        const userId = soldSellerId ?? soldSellerWallet;
+        if (!userId) {
+          logger.warn("secondary.notification.skipped", {
+            listing_id: soldListingId,
+            reason: "no_seller_identity",
+          });
+          return result;
+        }
         await this.notificationService.createNotification(
           userId,
           NotificationType.SECONDARY_MARKET_SOLD,

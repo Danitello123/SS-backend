@@ -79,7 +79,6 @@ export enum NotificationType {
   INVOICE_MATURED = "invoice_matured",
   SETTLEMENT_RECEIVED = "settlement_received",
   REFUND_PROCESSED = "refund_processed",
-  KYC_STATUS_CHANGE = "kyc_status_change",
   SECONDARY_MARKET_SOLD = "secondary_market_sold",
 }
 
