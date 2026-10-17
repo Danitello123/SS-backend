@@ -18,8 +18,11 @@ describe("FeeScheduleService", () => {
   });
 
   beforeEach(async () => {
-    await dataSource.getRepository(FeeSchedule).clear();
+    // FeeScheduleHistory.feeSchedule FKs back to FeeSchedule, so the child
+    // table must be cleared first or sqlite rejects deleting a still-
+    // referenced parent row left over from the previous test.
     await dataSource.getRepository(FeeScheduleHistory).clear();
+    await dataSource.getRepository(FeeSchedule).clear();
   });
 
   describe("getCurrentFeeSchedule", () => {
@@ -49,7 +52,10 @@ describe("FeeScheduleService", () => {
     });
 
     it("should throw error when no active schedule exists", async () => {
-      await expect(feeScheduleService.getCurrentFeeSchedule()).rejects.toThrow("NO_ACTIVE_FEE_SCHEDULE");
+      await expect(feeScheduleService.getCurrentFeeSchedule()).rejects.toMatchObject({
+        code: "NO_ACTIVE_FEE_SCHEDULE",
+        statusCode: 404,
+      });
     });
   });
 
@@ -108,7 +114,7 @@ describe("FeeScheduleService", () => {
           "GDADMINWALLET",
           "admin"
         )
-      ).rejects.toThrow("INVALID_FEE_RATE");
+      ).rejects.toMatchObject({ code: "INVALID_FEE_RATE", statusCode: 400 });
     });
 
     it("should require at least one fee to update", async () => {
@@ -125,7 +131,7 @@ describe("FeeScheduleService", () => {
 
       await expect(
         feeScheduleService.updateFeeSchedule({}, "GDADMINWALLET", "admin")
-      ).rejects.toThrow("NO_CHANGES");
+      ).rejects.toMatchObject({ code: "NO_CHANGES", statusCode: 400 });
     });
   });
 

@@ -5,7 +5,6 @@ import type { InvestorAcknowledgementService } from "../services/investor-acknow
 import type { AuthenticatedRequest } from "../types/auth";
 import { ServiceError } from "../utils/service-error";
 import { HttpError, PublicAppError } from "../utils/http-error";
-import { createInvestorRiskProfileController } from "@/controllers/investor-risk-profile.controller";
 import type { InvestorRiskProfileService } from "@/services/investor-risk-profile.service";
 
 export interface InvestorRouterDependencies {
@@ -72,8 +71,6 @@ export function createInvestorRouter({
 
   // ---- Risk Profile Management (issue #595) ----
   if (riskProfileService) {
-    const riskProfileController = createInvestorRiskProfileController(riskProfileService);
-
     router.post(
       "/risk-profile",
       auth,
