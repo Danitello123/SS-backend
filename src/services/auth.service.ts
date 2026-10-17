@@ -769,7 +769,8 @@ export class AuthService {
     if (!user || typeof user !== "object") {
       throw new HttpError(400, "User is required to generate token.");
     }
-    const sanitizedAddress = this.assertValidPublicKey(user.stellarAddress);
+    const sanitizedAddress =
+      typeof user.stellarAddress === "string" ? user.stellarAddress.trim() : "";
     const userId =
       typeof user.id === "string" && user.id.trim() ? user.id.trim() : sanitizedAddress;
 
