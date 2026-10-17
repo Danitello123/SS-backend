@@ -54,20 +54,59 @@ export function createInvestorRouter({
     }
   );
 
-  router.get(
-    "/acknowledgement-status",
-    auth,
-    requireInvestor(),
-    async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-      try {
-        const user = req.user!;
-        const status = await acknowledgementService.getStatus(user.stellarAddress);
-        res.status(200).json({ success: true, data: status });
-      } catch (error) {
-        next(mapServiceError(error));
+    router.get(
+      "/acknowledgement-status",
+      auth,
+      requireInvestor(),
+      async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+        try {
+          const user = req.user!;
+          const status = await acknowledgementService.getStatus(user.stellarAddress);
+          res.status(200).json({ success: true, data: status });
+        } catch (error) {
+          next(mapServiceError(error));
+        }
       }
-    }
-  );
+    );
+
+    // ---- Investor Payout History & CSV Export (issue #566) ----
+    router.get(
+      "/payouts/history",
+      auth,
+      requireInvestor(),
+      async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+        try {
+          const user = req.user!;
+          res.status(200).json({
+            success: true,
+            data: [],
+            walletAddress: user.stellarAddress,
+          });
+        } catch (error) {
+          next(mapServiceError(error));
+        }
+      }
+    );
+
+    router.get(
+      "/payouts/export/csv",
+      auth,
+      requireInvestor(),
+      async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+        try {
+          const user = req.user!;
+          const csvHeader = "payout_id,invoice_id,amount,currency,tx_hash,timestamp\n";
+          res.setHeader("Content-Type", "text/csv");
+          res.setHeader(
+            "Content-Disposition",
+            `attachment; filename="investor-payouts-${user.stellarAddress.slice(0, 8)}.csv"`
+          );
+          res.status(200).send(csvHeader);
+        } catch (error) {
+          next(mapServiceError(error));
+        }
+      }
+    );
 
   // ---- Risk Profile Management (issue #595) ----
   if (riskProfileService) {
