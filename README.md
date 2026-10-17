@@ -132,6 +132,24 @@ Feature-specific references are available under [`docs/`](./docs/):
 | [`docs/DB_WORKFLOW.md`](./docs/DB_WORKFLOW.md) | Migration workflow |
 | [`docs/IPFS.md`](./docs/IPFS.md) | IPFS pinning details |
 
+## Invoice draft management
+
+Issuer-facing draft lifecycle endpoints (all under `/api/v1`):
+
+| Endpoint | Transition | Authorization | Notes |
+| --- | --- | --- | --- |
+| `POST /invoices/:id/submit` | draft → pending review | issuer (invoice owner) only | Validates required fields before transitioning |
+| `PATCH /invoices/:id/submit` | draft → pending review | issuer (invoice owner) only | Alias for submit |
+| `POST /admin/invoices/:id/approve` | pending review → live | admin only | Triggers live listing on the marketplace immediately |
+| `PATCH /admin/invoices/:id/approve` | pending review → live | admin only | Alias for approve |
+| `POST /admin/invoices/:id/reject` | pending → draft with reason | admin only | Requires a non-empty rejection reason |
+| `DELETE /invoices/:id` | delete | issuer (invoice owner) only | Restricted to draft-state invoices only |
+
+Invalid transition attempts return a structured error carrying the current
+status, the requested target status, and the allowed next statuses, so callers
+can recover without guessing the lifecycle graph. The full state machine is
+documented in [`docs/INVOICE_LIFECYCLE.md`](./docs/INVOICE_LIFECYCLE.md).
+
 ## Architecture
 
 ```text

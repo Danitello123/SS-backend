@@ -15,6 +15,7 @@ import type { InvoiceExtensionService } from "@/services/invoice-extension.servi
 import type { AdminMetricsService, AdminMetricsQuery } from "@/services/admin-metrics.service";
 import type { AdminSettlementService } from "@/services/admin-settlement.service";
 import type { InvoiceEscrowContractService } from "@/services/stellar/invoice-escrow-contract.service";
+import type { FeeScheduleService } from "@/services/fee-schedule.service";
 import { approveKYC } from "./approve-kyc";
 import { rejectKYC } from "./reject-kyc";
 import { revokeKYC } from "./revoke-kyc";
@@ -26,6 +27,7 @@ import { createAdminRoyaltiesRouter } from "./royalties.routes";
 import { createAnalyticsSnapshotService } from "@/services/analytics-snapshot.service";
 import { createAdminAnalyticsTrendsRouter } from "./analytics-trends.routes";
 import { createAdminSettlementRouter } from "./settlement.routes";
+import { createAdminFeesRouter } from "./fees.routes";
 import { AppError } from "@/utils/http-error";
 import { logger } from "@/observability/logger";
 import type { AuthenticatedRequest } from "@/types/auth";
@@ -47,6 +49,7 @@ export interface AdminRouterDependencies {
   adminSettlementService?: AdminSettlementService;
   adminWallets?: string[];
   invoiceEscrowContractService?: InvoiceEscrowContractService;
+  feeScheduleService?: FeeScheduleService;
 }
 
 interface ExtensionReviewBody {
@@ -97,7 +100,8 @@ export function createAdminRouter({
   metricsService: _metricsService,
   adminSettlementService,
   adminWallets = [],
-  invoiceEscrowContractService
+  invoiceEscrowContractService,
+  feeScheduleService
 }: AdminRouterDependencies): Router {
   const router = Router();
 
@@ -276,6 +280,11 @@ export function createAdminRouter({
 
   if (adminSettlementService) {
     router.use("/", createAdminSettlementRouter({ adminSettlementService }));
+  }
+
+  // ---- Fee schedule management (issue #592) ----
+  if (feeScheduleService) {
+    router.use("/", createAdminFeesRouter(feeScheduleService));
   }
 
   return router;

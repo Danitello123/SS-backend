@@ -173,6 +173,24 @@ export class Invoice {
   @Index("idx_invoices_seller_wallet")
   sellerWallet!: string | null;
 
+  @Column({ name: "soroban_contract_id", type: "varchar", length: 56, nullable: true })
+  sorobanContractId!: string | null;
+
+  @Column({
+    name: "onchain_status",
+    type: "simple-enum",
+    enum: ["UNINITIALIZED", "ACTIVE", "SETTLED", "REFUNDED", "PAUSED"],
+    default: "UNINITIALIZED",
+    nullable: true,
+  })
+  onchainStatus!: "UNINITIALIZED" | "ACTIVE" | "SETTLED" | "REFUNDED" | "PAUSED" | null;
+
+  @Column({ name: "creation_tx_hash", type: "varchar", length: 64, nullable: true })
+  creationTxHash!: string | null;
+
+  @Column({ name: "last_synced_ledger", type: "bigint", nullable: true })
+  lastSyncedLedger!: string | null;
+
   @CreateDateColumn({ name: "created_at" })
   createdAt!: Date;
 

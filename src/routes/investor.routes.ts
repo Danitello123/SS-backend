@@ -5,10 +5,13 @@ import type { InvestorAcknowledgementService } from "../services/investor-acknow
 import type { AuthenticatedRequest } from "../types/auth";
 import { ServiceError } from "../utils/service-error";
 import { HttpError, PublicAppError } from "../utils/http-error";
+import { createInvestorRiskProfileController } from "@/controllers/investor-risk-profile.controller";
+import type { InvestorRiskProfileService } from "@/services/investor-risk-profile.service";
 
 export interface InvestorRouterDependencies {
   authService: AuthService;
   acknowledgementService: InvestorAcknowledgementService;
+  riskProfileService?: InvestorRiskProfileService;
 }
 
 /**
@@ -18,6 +21,7 @@ export interface InvestorRouterDependencies {
 export function createInvestorRouter({
   authService,
   acknowledgementService,
+  riskProfileService,
 }: InvestorRouterDependencies): Router {
   const router = Router();
   const auth = createAuthMiddleware(authService);
@@ -65,6 +69,74 @@ export function createInvestorRouter({
       }
     }
   );
+
+  // ---- Risk Profile Management (issue #595) ----
+  if (riskProfileService) {
+    const riskProfileController = createInvestorRiskProfileController(riskProfileService);
+
+    router.post(
+      "/risk-profile",
+      auth,
+      requireInvestor(),
+      async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+        try {
+          const user = req.user!;
+          const wallet = user.stellarAddress;
+          const body = req.body || {};
+
+          const responses = {
+            investmentExperience: body.investmentExperience,
+            timeHorizon: body.timeHorizon,
+            riskTolerance: body.riskTolerance,
+            annualIncomeRange: body.annualIncomeRange,
+            netWorthRange: body.netWorthRange,
+            investmentObjective: body.investmentObjective,
+            lossTolerancePercentage: body.lossTolerancePercentage,
+          };
+
+          const profile = await riskProfileService.saveRiskProfile(wallet, responses);
+          res.status(200).json({ success: true, data: profile });
+        } catch (error) {
+          next(mapServiceError(error));
+        }
+      }
+    );
+
+    router.get(
+      "/risk-profile",
+      auth,
+      requireInvestor(),
+      async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+        try {
+          const user = req.user!;
+          const profile = await riskProfileService.getRiskProfile(user.stellarAddress);
+
+          if (!profile) {
+            throw new ServiceError("PROFILE_NOT_FOUND", "Risk profile not found. Please complete the risk questionnaire.", 404);
+          }
+
+          res.status(200).json({ success: true, data: profile });
+        } catch (error) {
+          next(mapServiceError(error));
+        }
+      }
+    );
+
+    router.delete(
+      "/risk-profile",
+      auth,
+      requireInvestor(),
+      async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+        try {
+          const user = req.user!;
+          await riskProfileService.deleteRiskProfile(user.stellarAddress);
+          res.status(204).send();
+        } catch (error) {
+          next(mapServiceError(error));
+        }
+      }
+    );
+  }
 
   return router;
 }
