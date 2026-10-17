@@ -2,7 +2,7 @@ import { IsNull } from "typeorm";
 import { InvoiceService } from "../src/services/invoice.service";
 import { ServiceError } from "../src/utils/service-error";
 import { Invoice } from "../src/models/Invoice.model";
-import { InvoiceStatus } from "../src/types/enums";
+import { InvoiceStatus, KYCStatus } from "../src/types/enums";
 import { logger } from "../src/observability/logger";
 
 describe("InvoiceService", () => {
@@ -178,9 +178,6 @@ describe("InvoiceService", () => {
       mockInvoiceRepository.findOneBy.mockResolvedValue(mockInvoice);
       const creation = invoiceService.createInvoice(buildCreateInput());
 
-      await expect(invoiceService.createInvoice(buildCreateInput())).rejects.toThrow(ServiceError);
-
-      await expect(invoiceService.createInvoice(buildCreateInput())).rejects.toMatchObject({
       await expect(creation).rejects.toBeInstanceOf(ServiceError);
       await expect(creation).rejects.toMatchObject({
         code: "invoice_number_exists",
@@ -510,9 +507,9 @@ describe("InvoiceService", () => {
         await invoiceService.getInvoicesBySellerId({ sellerId: "seller-456", skip, take });
 
         expect(mockInvoiceRepository.find).toHaveBeenCalledWith(
-          expect.objectContaining({ skip: expectedSkip, take: expectedTake }),
+          expect.objectContaining({ skip: expectedSkip, take: expectedTake })
         );
-      },
+      }
     );
   });
 
@@ -1092,6 +1089,66 @@ describe("InvoiceService", () => {
       });
     });
   });
+
+  // ============ REPOSITORY ERROR HANDLING ============
+  describe("repository error handling", () => {
+    it("should return a service error and log when invoice listing fails", async () => {
+      const errorSpy = jest.spyOn(logger, "error");
+      mockInvoiceRepository.find.mockRejectedValue(new Error("Query timeout"));
+      mockInvoiceRepository.count.mockResolvedValue(0);
+
+      await expect(
+        invoiceService.getInvoicesBySellerId({ sellerId: "seller-456" })
+      ).rejects.toMatchObject({ code: "invoice_list_failed", statusCode: 500 });
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        "Failed to fetch invoices by seller",
+        expect.objectContaining({ sellerId: "seller-456" })
+      );
+      errorSpy.mockRestore();
+    });
+
+    it("should propagate database errors on createInvoice", async () => {
+      mockInvoiceRepository.findOneBy.mockResolvedValue(null);
+      mockInvoiceRepository.create.mockReturnValue(mockInvoice);
+      mockInvoiceRepository.save.mockRejectedValue(new Error("Connection refused"));
+
+      await expect(invoiceService.createInvoice(buildCreateInput())).rejects.toThrow(
+        /Connection refused|Failed to create invoice/
+      );
+    });
+
+    it("should propagate database errors on getInvoiceById", async () => {
+      mockInvoiceRepository.findOne.mockRejectedValue(new Error("Query timeout"));
+
+      await expect(invoiceService.getInvoiceById("invoice-123")).rejects.toThrow(
+        /Query timeout|Failed to fetch invoice/
+      );
+    });
+
+    it("should propagate database errors on updateInvoice", async () => {
+      mockInvoiceRepository.findOne.mockResolvedValue(mockInvoice);
+      mockInvoiceRepository.save.mockRejectedValue(new Error("Deadlock detected"));
+
+      await expect(
+        invoiceService.updateInvoice({
+          sellerId: "seller-456",
+          invoiceId: "invoice-123",
+          customerName: "Updated",
+        })
+      ).rejects.toThrow(/Deadlock detected|Processing failed/);
+    });
+
+    it("should propagate database errors on deleteInvoice", async () => {
+      mockInvoiceRepository.findOne.mockResolvedValue(mockInvoice);
+      mockInvoiceRepository.save.mockRejectedValue(new Error("Storage full"));
+
+      await expect(invoiceService.deleteInvoice("invoice-123", "seller-456")).rejects.toThrow(
+        /Storage full|Processing failed/
+      );
+    });
+  });
+
   // ============ STATE-MACHINE BACKED TRANSITIONS ============
   describe("status transitions", () => {
     let stateMachine: { transition: jest.Mock; dispatch: jest.Mock };
@@ -1140,28 +1197,6 @@ describe("InvoiceService", () => {
         );
         expect(stateMachine.dispatch).toHaveBeenCalledTimes(1);
       });
-  // ============ REPOSITORY ERROR HANDLING ============
-  describe("repository error handling", () => {
-    it("should return a service error and log when invoice listing fails", async () => {
-      const errorSpy = jest.spyOn(logger, "error");
-      mockInvoiceRepository.find.mockRejectedValue(new Error("Query timeout"));
-      mockInvoiceRepository.count.mockResolvedValue(0);
-
-      await expect(
-        invoiceService.getInvoicesBySellerId({ sellerId: "seller-456" }),
-      ).rejects.toMatchObject({ code: "invoice_list_failed", statusCode: 500 });
-
-      expect(errorSpy).toHaveBeenCalledWith(
-        "Failed to fetch invoices by seller",
-        expect.objectContaining({ sellerId: "seller-456" }),
-      );
-      errorSpy.mockRestore();
-    });
-
-    it("should propagate database errors on createInvoice", async () => {
-      mockInvoiceRepository.findOneBy.mockResolvedValue(null);
-      mockInvoiceRepository.create.mockReturnValue(mockInvoice);
-      mockInvoiceRepository.save.mockRejectedValue(new Error("Connection refused"));
 
       it("should record a null actor when the admin is unknown", async () => {
         mockInvoiceRepository.findOne.mockResolvedValue(mockInvoice);

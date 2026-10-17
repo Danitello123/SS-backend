@@ -44,6 +44,7 @@ import type { AtomicSwapService } from "./services/atomic-swap.service";
 import type { AclService } from "./services/acl.service";
 import type { CreatorKeyService } from "./services/creator-key.service";
 import type { CurveMigrationService } from "./services/curve-migration.service";
+import type { KeyMergeProposalService } from "./services/key-merge-proposal.service";
 import { createSwapRouter } from "./routes/swap.routes";
 import { createRoyaltiesRouter } from "./routes/royalties.routes";
 import { createSubscriptionsRouter } from "./routes/subscriptions.routes";
@@ -93,7 +94,10 @@ async function checkDependency(
     await Promise.race([
       Promise.resolve().then(check),
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("Health check timed out")), READINESS_CHECK_TIMEOUT_MS);
+        timer = setTimeout(
+          () => reject(new Error("Health check timed out")),
+          READINESS_CHECK_TIMEOUT_MS
+        );
         timer.unref?.();
       }),
     ]);
@@ -194,6 +198,7 @@ export interface AppDependencies {
   aclService?: AclService;
   creatorKeyService?: CreatorKeyService;
   curveMigrationService?: CurveMigrationService;
+  keyMergeProposalService?: KeyMergeProposalService;
   secondaryMarketService?: SecondaryMarketService;
   watchlistService?: WatchlistService;
   settlementWorker?: SettlementWorker;
@@ -244,6 +249,7 @@ export function createApp({
   aclService,
   creatorKeyService,
   curveMigrationService,
+  keyMergeProposalService,
   secondaryMarketService,
   watchlistService,
   settlementWorker,
@@ -488,8 +494,13 @@ export function createApp({
     app.use("/api/v1/watchlist", createWatchlistRouter({ watchlistService, authService }));
   }
 
-  // ---- Keys: Ratings Leaderboard ----
-  if (ratingsLeaderboardService) {
+  // ---- Keys: Ratings Leaderboard, Buy Limits, Curve Migrations, Merge Proposals ----
+  if (
+    ratingsLeaderboardService ||
+    creatorKeyService ||
+    curveMigrationService ||
+    keyMergeProposalService
+  ) {
     app.use(
       "/api/v1/keys",
       createKeysRouter({
@@ -497,6 +508,7 @@ export function createApp({
         authService,
         creatorKeyService,
         curveMigrationService,
+        keyMergeProposalService,
       })
     );
   }
@@ -511,27 +523,18 @@ export function createApp({
 
   // ---- Royalties: creator earnings and claim history (issue #537) ----
   if (royaltyEarningsService) {
-    app.use(
-      "/api/v1/royalties",
-      createRoyaltiesRouter({ royaltyEarningsService, authService })
-    );
+    app.use("/api/v1/royalties", createRoyaltiesRouter({ royaltyEarningsService, authService }));
   }
 
   // ---- Subscriptions: gated-content access check (issue #539) ----
   // Public read: a content gate has to answer before the visitor is known.
   if (subscriptionStatusService) {
-    app.use(
-      "/api/v1/subscriptions",
-      createSubscriptionsRouter({ subscriptionStatusService })
-    );
+    app.use("/api/v1/subscriptions", createSubscriptionsRouter({ subscriptionStatusService }));
   }
 
   // ---- Onboarding: tour completion state (issue #540) ----
   if (onboardingService) {
-    app.use(
-      "/api/v1/onboarding",
-      createOnboardingRouter({ onboardingService, authService })
-    );
+    app.use("/api/v1/onboarding", createOnboardingRouter({ onboardingService, authService }));
   }
 
   if (swapService) {
@@ -554,8 +557,7 @@ export function createApp({
         metricsService: adminMetricsService,
         adminSettlementService,
         adminWallets: config.admin.wallets || [],
-        invoiceEscrowContractService
-
+        invoiceEscrowContractService,
       })
     );
   }
