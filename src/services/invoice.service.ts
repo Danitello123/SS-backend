@@ -76,6 +76,14 @@ export interface CreateInvoiceInput {
   dueDate: Date;
   ipfsHash?: string;
   riskScore?: string;
+  /** Extra columns captured by the public self-serve submission flow. */
+  sellerWallet?: string | null;
+  title?: string | null;
+  faceValue?: string | null;
+  fundingTarget?: string | null;
+  yieldBps?: number | null;
+  fundingDeadline?: Date | null;
+  ipfsDocumentUrl?: string | null;
 }
 
 export interface UpdateInvoiceInput {
@@ -169,6 +177,13 @@ export interface InvoiceDTO {
   createdAt: Date;
   updatedAt: Date;
   commitments?: CommitmentDTO[];
+  sellerWallet?: string | null;
+  title?: string | null;
+  faceValue?: string | null;
+  fundingTarget?: string | null;
+  yieldBps?: number | null;
+  fundingDeadline?: Date | null;
+  ipfsDocumentUrl?: string | null;
 }
 
 export interface GetInvoicesOptions {
@@ -305,6 +320,13 @@ export class InvoiceService {
         ipfsHash: input.ipfsHash?.trim() || null,
         riskScore: input.riskScore?.trim() || null,
         status: InvoiceStatus.DRAFT,
+        sellerWallet: input.sellerWallet ?? null,
+        title: input.title?.trim() || null,
+        faceValue: input.faceValue ?? null,
+        fundingTarget: input.fundingTarget ?? null,
+        yieldBps: input.yieldBps ?? null,
+        fundingDeadline: input.fundingDeadline ?? null,
+        ipfsDocumentUrl: input.ipfsDocumentUrl?.trim() || null,
       } as Partial<Invoice>);
 
       const saved = await this.invoiceRepository.save(invoice);
@@ -1192,6 +1214,13 @@ export class InvoiceService {
       rejectionReason: invoice.rejectionReason ?? null,
       createdAt: invoice.createdAt,
       updatedAt: invoice.updatedAt,
+      sellerWallet: invoice.sellerWallet ?? null,
+      title: invoice.title ?? null,
+      faceValue: invoice.faceValue ?? null,
+      fundingTarget: invoice.fundingTarget ?? null,
+      yieldBps: invoice.yieldBps ?? null,
+      fundingDeadline: invoice.fundingDeadline ?? null,
+      ipfsDocumentUrl: invoice.ipfsDocumentUrl ?? null,
     };
   }
 }
