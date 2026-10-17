@@ -2,6 +2,7 @@ import { KYCStatus } from "@/types/enums";
 
 export class KYCError extends Error {
   status: number;
+  statusCode: number;
   code: string;
 
   constructor(message: string, code = "KYC_NOT_APPROVED", status = 403) {
@@ -9,6 +10,7 @@ export class KYCError extends Error {
     this.name = "KYCError";
     this.code = code;
     this.status = status;
+    this.statusCode = status;
   }
 }
 

@@ -8,8 +8,11 @@ export interface PublicUser {
   email: string | null;
   userType: UserType;
   kycStatus: KYCStatus;
+  isKycVerified?: boolean;
+  isSuspended?: boolean;
   createdAt: Date;
   updatedAt: Date;
+  role?: "admin" | "user";
 }
 
 // Existing user type

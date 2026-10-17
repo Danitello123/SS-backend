@@ -23,9 +23,7 @@ export interface SorobanEscrowFundingDraft {
 }
 
 export interface SorobanEscrowClient {
-  prepareInvestmentFunding(
-    input: SorobanEscrowFundingInput,
-  ): Promise<SorobanEscrowFundingDraft>;
+  prepareInvestmentFunding(input: SorobanEscrowFundingInput): Promise<SorobanEscrowFundingDraft>;
 }
 
 interface FundingUnitOfWork {
@@ -48,6 +46,7 @@ export interface OrchestrateInvestmentFundingResult {
   investmentId: string;
   invoiceId: string;
   transactionId?: string;
+  txHash?: string;
   xdr?: string;
   contractId?: string;
   expiresAt?: string;
@@ -77,17 +76,13 @@ const NOOP_LOGGER: AppLogger = {
 export class OrchestrateInvestmentFundingService {
   private readonly logger: AppLogger;
 
-  constructor(
-    private readonly dependencies: OrchestrateInvestmentFundingServiceDependencies,
-  ) {
+  constructor(private readonly dependencies: OrchestrateInvestmentFundingServiceDependencies) {
     this.logger = (dependencies.logger ?? NOOP_LOGGER).child({
       component: "soroban-escrow-funding",
     });
   }
 
-  async orchestrateFunding(
-    investmentId: string,
-  ): Promise<OrchestrateInvestmentFundingResult> {
+  async orchestrateFunding(investmentId: string): Promise<OrchestrateInvestmentFundingResult> {
     const investment = await this.dependencies.investmentReader.findById(investmentId);
 
     if (!investment) {
@@ -98,7 +93,7 @@ export class OrchestrateInvestmentFundingService {
       throw new ServiceError(
         "invalid_investment_state",
         "Only pending investments can be funded.",
-        409,
+        409
       );
     }
 
@@ -106,7 +101,7 @@ export class OrchestrateInvestmentFundingService {
       throw new ServiceError(
         "invoice_not_found",
         "Investment must be linked to an invoice before funding.",
-        409,
+        409
       );
     }
 
@@ -125,7 +120,7 @@ export class OrchestrateInvestmentFundingService {
       throw new ServiceError(
         "soroban_contract_not_configured",
         "Soroban escrow is enabled but no contract ID is configured.",
-        500,
+        500
       );
     }
 
@@ -174,7 +169,7 @@ export class OrchestrateInvestmentFundingService {
       }
 
       const existingTransaction = await unitOfWork.findTransactionByInvestmentIdForUpdate(
-        lockedInvestment.id,
+        lockedInvestment.id
       );
 
       const transaction =
@@ -202,6 +197,7 @@ export class OrchestrateInvestmentFundingService {
         investmentId: lockedInvestment.id,
         invoiceId: lockedInvestment.invoiceId,
         transactionId: savedTransaction.id,
+        txHash: draft.txHash,
         xdr: draft.xdr,
         contractId,
         expiresAt: draft.expiresAt,
@@ -245,7 +241,7 @@ class TypeOrmFundingTransactionRunner implements FundingTransactionRunner {
           manager.getRepository(Transaction).save(transaction),
         createTransaction: (input: Partial<Transaction>) =>
           manager.getRepository(Transaction).create(input),
-      }),
+      })
     );
   }
 }
@@ -254,12 +250,10 @@ export function createOrchestrateInvestmentFundingService(
   dataSource: DataSource,
   sorobanEscrowClient: SorobanEscrowClient,
   config: OrchestrateInvestmentFundingServiceDependencies["config"],
-  logger?: AppLogger,
+  logger?: AppLogger
 ): OrchestrateInvestmentFundingService {
   return new OrchestrateInvestmentFundingService({
-    investmentReader: new TypeOrmInvestmentFundingReader(
-      dataSource.getRepository(Investment),
-    ),
+    investmentReader: new TypeOrmInvestmentFundingReader(dataSource.getRepository(Investment)),
     transactionRunner: new TypeOrmFundingTransactionRunner(dataSource),
     sorobanEscrowClient,
     config,

@@ -79,7 +79,7 @@ describe("Response envelope", () => {
     // Add a route that throws an error before the error middleware is applied
     // We use the router pattern to ensure the route is matched before notFoundMiddleware
     const router = request.agent(app);
-    
+
     // Simulate an internal error by accessing a route that will throw
     // Since we can't add routes after app creation, we'll test via the auth routes
     // which will throw an error from the stub service
@@ -116,6 +116,61 @@ describe("Health endpoints", () => {
     expect(response.body.data?.status).toBe("ok");
     expect(response.body.data?.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
     expect(typeof response.body.data?.uptimeSeconds).toBe("number");
+    expect(response.body.data?.version).toEqual(expect.any(String));
+  });
+
+  it("GET /ready returns 200 when database and Redis are healthy without authentication", async () => {
+    const authService = createAuthServiceStub();
+    const getCurrentUser = jest.fn(authService.getCurrentUser);
+    authService.getCurrentUser = getCurrentUser;
+    const app = createApp({
+      authService,
+      readinessChecks: {
+        database: jest.fn().mockResolvedValue(undefined),
+        redis: jest.fn().mockResolvedValue(undefined),
+      },
+      metricsEnabled: false,
+      http: { rateLimit: { enabled: false } },
+    });
+
+    const response = await request(app).get("/ready").expect(200);
+
+    expect(response.body).toEqual({
+      success: true,
+      data: {
+        status: "ready",
+        dependencies: {
+          database: { status: "ok" },
+          redis: { status: "ok" },
+        },
+      },
+    });
+    expect(getCurrentUser).not.toHaveBeenCalled();
+  });
+
+  it("GET /ready returns 503 with failed dependency details", async () => {
+    const app = createApp({
+      authService: createAuthServiceStub(),
+      readinessChecks: {
+        database: jest.fn().mockRejectedValue(new Error("database unavailable")),
+        redis: jest.fn().mockResolvedValue(undefined),
+      },
+      metricsEnabled: false,
+      http: { rateLimit: { enabled: false } },
+    });
+
+    const response = await request(app).get("/ready").expect(503);
+
+    expect(response.body).toMatchObject({
+      success: false,
+      data: {
+        status: "not_ready",
+        dependencies: {
+          database: { status: "unhealthy", error: "database connectivity check failed" },
+          redis: { status: "ok" },
+        },
+      },
+    });
   });
 
   it("GET /health/db returns 503 when DB is not initialized", async () => {

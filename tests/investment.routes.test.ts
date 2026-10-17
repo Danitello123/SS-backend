@@ -32,7 +32,7 @@ describe("Investment Routes", () => {
       createInvestmentRouter({
         investmentService: mockInvestmentService,
         authService: mockAuthService,
-      }),
+      })
     );
     app.use(createErrorMiddleware(logger));
   });
@@ -68,6 +68,7 @@ describe("Investment Routes", () => {
         invoiceId: "invoice-1",
         investorId: mockUser.id,
         investmentAmount: "500.0000",
+        investorWallet: mockUser.stellarAddress,
       });
     });
 

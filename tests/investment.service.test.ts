@@ -4,6 +4,9 @@ import { Invoice } from "../src/models/Invoice.model";
 import { Investment } from "../src/models/Investment.model";
 import { InvoiceStatus, InvestmentStatus } from "../src/types/enums";
 import { ServiceError } from "../src/utils/service-error";
+import { InvoiceStatusHistory } from "../src/models/InvoiceStatusHistory.model";
+
+const INVESTOR_WALLET = "GINVESTORWALLET1234567890ABCDEFGHIJKLMNOPQRSTUV";
 
 describe("InvestmentService", () => {
   let mockDataSource: jest.Mocked<DataSource>;
@@ -27,18 +30,25 @@ describe("InvestmentService", () => {
 
     mockDataSource = {
       transaction: jest.fn().mockImplementation((cb) => cb(mockEntityManager)),
+      getRepository: jest.fn().mockReturnValue({
+        findOne: jest.fn().mockResolvedValue({ walletAddress: INVESTOR_WALLET, termsVersion: "1", acknowledgedAt: new Date() }),
+        find: jest.fn().mockResolvedValue([]),
+        create: jest.fn(),
+        save: jest.fn(),
+      }),
     } as any;
 
     investmentService = new InvestmentService(mockDataSource);
   });
 
-  const getMockInvoice = () => ({
-    id: "invoice-1",
-    sellerId: "seller-1",
-    amount: "1000.0000",
-    netAmount: "950.0000",
-    status: InvoiceStatus.PUBLISHED,
-  } as Invoice);
+  const getMockInvoice = () =>
+    ({
+      id: "invoice-1",
+      sellerId: "seller-1",
+      amount: "1000.0000",
+      netAmount: "950.0000",
+      status: InvoiceStatus.PUBLISHED,
+    }) as Invoice;
 
   it("should create a PENDING investment when within capacity", async () => {
     const mockInvoice = getMockInvoice();
@@ -51,6 +61,7 @@ describe("InvestmentService", () => {
       invoiceId: "invoice-1",
       investorId: "investor-1",
       investmentAmount: "475.0000",
+      investorWallet: INVESTOR_WALLET,
     };
 
     const result = await investmentService.createInvestment(input);
@@ -60,7 +71,8 @@ describe("InvestmentService", () => {
     expect(result.investmentAmount).toBe("475.0000");
     // expectedReturn = 475 * (1000 / 950) = 475 * 1.0526315789 = 500
     expect(result.expectedReturn).toBe("500.0000");
-    expect(mockEntityManager.save).toHaveBeenCalledTimes(1); // Only save investment
+    expect(mockEntityManager.save).toHaveBeenCalledTimes(2); // Investment, and invoice funded_amount
+    expect(mockInvoice.fundedAmount).toBe("475.0000");
   });
 
   it("should transition invoice to FUNDED when fully subscribed", async () => {
@@ -74,29 +86,42 @@ describe("InvestmentService", () => {
       invoiceId: "invoice-1",
       investorId: "investor-1",
       investmentAmount: "950.0000",
+      investorWallet: INVESTOR_WALLET,
     };
 
     await investmentService.createInvestment(input);
 
     expect(mockInvoice.status).toBe(InvoiceStatus.FUNDED);
-    expect(mockEntityManager.save).toHaveBeenCalledTimes(2); // Investment and Invoice
+    expect(mockEntityManager.save).toHaveBeenCalledTimes(3); // Investment, Invoice and status history
+    expect(mockEntityManager.save).toHaveBeenCalledWith(
+      InvoiceStatusHistory,
+      expect.objectContaining({
+        invoiceId: "invoice-1",
+        fromStatus: InvoiceStatus.PUBLISHED,
+        toStatus: InvoiceStatus.FUNDED,
+        actorRole: "system",
+        trigger: "fully_funded",
+      })
+    );
   });
 
   it("should reject investment if it exceeds capacity", async () => {
     const mockInvoice = getMockInvoice();
     mockQueryBuilder.getOne.mockResolvedValue(mockInvoice);
-    mockEntityManager.find.mockResolvedValue([
-      { investmentAmount: "500.0000" } as Investment,
-    ]);
+    mockEntityManager.find.mockResolvedValue([{ investmentAmount: "500.0000" } as Investment]);
 
     const input = {
       invoiceId: "invoice-1",
       investorId: "investor-1",
       investmentAmount: "500.0000", // 500 + 500 > 950
+      investorWallet: INVESTOR_WALLET,
     };
 
     await expect(investmentService.createInvestment(input)).rejects.toThrow(
-      new ServiceError("INSUFFICIENT_CAPACITY", "Investment amount 500 exceeds remaining capacity 450"),
+      new ServiceError(
+        "INSUFFICIENT_CAPACITY",
+        "Investment amount 500 exceeds remaining capacity 450"
+      )
     );
   });
 
@@ -108,10 +133,11 @@ describe("InvestmentService", () => {
       invoiceId: "invoice-1",
       investorId: "seller-1", // Same as invoice seller
       investmentAmount: "100.0000",
+      investorWallet: INVESTOR_WALLET,
     };
 
     await expect(investmentService.createInvestment(input)).rejects.toThrow(
-      new ServiceError("SELF_DEALING", "Investors cannot invest in their own invoices"),
+      new ServiceError("SELF_DEALING", "Investors cannot invest in their own invoices")
     );
   });
 
@@ -120,10 +146,11 @@ describe("InvestmentService", () => {
       invoiceId: "invoice-1",
       investorId: "investor-1",
       investmentAmount: "-100.0000",
+      investorWallet: INVESTOR_WALLET,
     };
 
     await expect(investmentService.createInvestment(input)).rejects.toThrow(
-      new ServiceError("INVALID_AMOUNT", "Investment amount must be greater than zero"),
+      new ServiceError("INVALID_AMOUNT", "Investment amount must be greater than zero")
     );
   });
 });

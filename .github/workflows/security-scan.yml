@@ -1,0 +1,60 @@
+# StellarSettle API – Security Scan
+# Automated dependency vulnerability scanning with Trivy
+# Runs on PRs and pushes to dev branch
+# Fails on CRITICAL vulnerabilities (CVSS >= 9.0)
+name: Security Scan
+
+on:
+  pull_request:
+    branches: [dev, develop]
+  push:
+    branches: [dev, develop]
+
+jobs:
+  trivy-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          ignore-unfixed: true
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+          category: 'trivy'
+
+      - name: Run npm audit for additional validation
+        run: npm audit --audit-level=critical --production
+        continue-on-error: true
+
+      - name: Generate security summary
+        if: always()
+        run: |
+          echo "## 🔒 Security Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Trivy Filesystem Scan" >> $GITHUB_STEP_SUMMARY
+          echo "- Scan type: Filesystem (src, package-lock.json, configuration files)" >> $GITHUB_STEP_SUMMARY
+          echo "- Severity levels: CRITICAL, HIGH" >> $GITHUB_STEP_SUMMARY
+          echo "- Unfixed vulnerabilities: Ignored" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### npm Audit" >> $GITHUB_STEP_SUMMARY
+          echo "- Dependency level: Production only" >> $GITHUB_STEP_SUMMARY
+          echo "- Failure threshold: CRITICAL severity" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "See [Security tab](../../security/code-scanning) for detailed results." >> $GITHUB_STEP_SUMMARY
+

@@ -1,8 +1,6 @@
 import { config } from "dotenv";
 import "dotenv/config";
 import { Networks } from "stellar-sdk";
-import path from "path";
-import os from "os";
 
 config();
 
@@ -33,12 +31,40 @@ export interface AppConfig {
       max: number;
     };
   };
+  redis: {
+    url: string;
+  };
+  rateLimits: {
+    enabled: boolean;
+    auth: {
+      ip: { windowMs: number; max: number };
+      wallet: { windowMs: number; max: number };
+    };
+    invest: {
+      ip: { windowMs: number; max: number };
+      wallet: { windowMs: number; max: number };
+    };
+    invoiceSubmit: {
+      ip: { windowMs: number; max: number };
+      wallet: { windowMs: number; max: number };
+    };
+  };
   reconciliation: {
     enabled: boolean;
     intervalMs: number;
     batchSize: number;
     gracePeriodMs: number;
     maxRuntimeMs: number;
+  };
+  maturity: {
+    enabled: boolean;
+    intervalMs: number;
+    batchSize: number;
+  };
+  sorobanIndexer: {
+    enabled: boolean;
+    intervalMs: number;
+    lagAlertThresholdLedgers: number;
   };
   stellar: {
     network: SupportedStellarNetwork;
@@ -48,11 +74,14 @@ export interface AppConfig {
     enabled: boolean;
     contractId: string | null;
     fundingMode: "wallet_xdr";
+    /** Soroban JSON-RPC endpoint used to read on-chain contract state. */
+    rpcUrl: string | null;
   };
   ipfs: {
     apiUrl: string;
     jwt: string;
     gatewayUrl: string;
+    gatewayTokenTtlSeconds: number;
     maxFileSizeMB: number;
     allowedMimeTypes: string[];
     uploadRateLimit: {
@@ -60,36 +89,52 @@ export interface AppConfig {
       maxUploads: number;
     };
   };
-  documentExport: {
-    /** Signs/verifies the download token in a bulk-export's signed URL (issue #589). */
-    signingSecret: string;
-    /** How long a signed download URL (and the ZIP it points to) stays valid. */
-    urlTtlMinutes: number;
-    /** Where generated ZIPs are written before being streamed and cleaned up. */
-    tempDir: string;
-  };
   kyc: {
     skipVerification: boolean;
+    webhookSecret?: string;
+  };
+  admin: {
+    ipWhitelist: string[];
+    wallets: string[];
+  };
+  /** Investor accreditation terms version (issue #473). Bumping forces re-ack. */
+  termsVersion: string;
+  cache: {
+    redisUrl?: string;
+    invoicesListTtlSeconds: number;
+    invoiceDetailTtlSeconds: number;
+    enabled: boolean;
   };
 }
-
 
 // ---------------- DEFAULTS ----------------
 
 const DEFAULT_PORT = 3000;
 const DEFAULT_JWT_EXPIRES_IN = "15m";
-const DEFAULT_CHALLENGE_TTL_MS = 5 * 60 * 1000;
+const DEFAULT_CHALLENGE_TTL_MS = 60 * 1000; // 60 seconds (Issue #463)
 const DEFAULT_METRICS_ENABLED = true;
+
+const DEFAULT_CACHE_ENABLED = true;
+const DEFAULT_CACHE_TTL_INVOICES_LIST = 30; // 30 seconds
+const DEFAULT_CACHE_TTL_INVOICE_DETAIL = 60; // 60 seconds
 
 const DEFAULT_RECONCILIATION_ENABLED = false;
 const DEFAULT_RECONCILIATION_INTERVAL_MS = 30 * 1000;
 const DEFAULT_RECONCILIATION_BATCH_SIZE = 25;
 const DEFAULT_RECONCILIATION_GRACE_PERIOD_MS = 60 * 1000;
 const DEFAULT_RECONCILIATION_MAX_RUNTIME_MS = 10 * 1000;
+const DEFAULT_SOROBAN_INDEXER_INTERVAL_MS = 10 * 1000;
+const DEFAULT_SOROBAN_INDEXER_LAG_THRESHOLD_LEDGERS = 1000;
+
+const DEFAULT_MATURITY_ENABLED = true;
+const DEFAULT_MATURITY_INTERVAL_MS = 5 * 60 * 1000;
+const DEFAULT_MATURITY_BATCH_SIZE = 50;
 
 const DEFAULT_BODY_SIZE_LIMIT = "1mb";
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 15 * 1000;
 
+const DEFAULT_IPFS_GATEWAY_URL = "https://gateway.pinata.cloud";
+const DEFAULT_IPFS_GATEWAY_TOKEN_TTL_SECONDS = 3600;
 const DEFAULT_IPFS_MAX_FILE_SIZE_MB = 10;
 const DEFAULT_IPFS_ALLOWED_MIME_TYPES = [
   "application/pdf",
@@ -101,10 +146,6 @@ const DEFAULT_IPFS_ALLOWED_MIME_TYPES = [
 
 const DEFAULT_IPFS_UPLOAD_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const DEFAULT_IPFS_UPLOAD_RATE_LIMIT_MAX_UPLOADS = 10;
-const DEFAULT_IPFS_GATEWAY_URL = "https://gateway.pinata.cloud/ipfs";
-
-const DEFAULT_DOCUMENT_EXPORT_URL_TTL_MINUTES = 60;
-
 
 // ---------------- HELPERS ----------------
 
@@ -138,7 +179,10 @@ function parseBoolean(value: string | undefined, fallback: boolean, name: string
 
 function parseCsv(value?: string): string[] {
   if (!value) return [];
-  return value.split(",").map(v => v.trim()).filter(Boolean);
+  return value
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
 }
 
 function parseTrustProxy(value?: string): boolean | number | string {
@@ -173,7 +217,6 @@ function requireString(value: string | undefined, name: string): string {
   if (!value) throw new Error(`${name} is required.`);
   return value;
 }
-
 
 // ---------------- MAIN CONFIG ----------------
 
@@ -224,11 +267,93 @@ export function getConfig(): AppConfig {
           60000,
           "RATE_LIMIT_WINDOW_MS"
         ),
-        max: parsePositiveInteger(
-          process.env.RATE_LIMIT_MAX,
-          100,
-          "RATE_LIMIT_MAX"
-        ),
+        max: parsePositiveInteger(process.env.RATE_LIMIT_MAX, 100, "RATE_LIMIT_MAX"),
+      },
+    },
+
+    redis: {
+      url: process.env.REDIS_URL ?? "redis://localhost:6379",
+    },
+
+    rateLimits: {
+      enabled: parseBoolean(process.env.RATE_LIMIT_ENABLED, true, "RATE_LIMIT_ENABLED"),
+      auth: {
+        ip: {
+          windowMs: parsePositiveInteger(
+            process.env.RATE_LIMIT_AUTH_IP_WINDOW_MS,
+            60000,
+            "RATE_LIMIT_AUTH_IP_WINDOW_MS"
+          ),
+          max: parsePositiveInteger(
+            process.env.RATE_LIMIT_AUTH_IP_MAX,
+            20,
+            "RATE_LIMIT_AUTH_IP_MAX"
+          ),
+        },
+        wallet: {
+          windowMs: parsePositiveInteger(
+            process.env.RATE_LIMIT_AUTH_WALLET_WINDOW_MS,
+            60000,
+            "RATE_LIMIT_AUTH_WALLET_WINDOW_MS"
+          ),
+          max: parsePositiveInteger(
+            process.env.RATE_LIMIT_AUTH_WALLET_MAX,
+            10,
+            "RATE_LIMIT_AUTH_WALLET_MAX"
+          ),
+        },
+      },
+      invest: {
+        ip: {
+          windowMs: parsePositiveInteger(
+            process.env.RATE_LIMIT_INVEST_IP_WINDOW_MS,
+            60000,
+            "RATE_LIMIT_INVEST_IP_WINDOW_MS"
+          ),
+          max: parsePositiveInteger(
+            process.env.RATE_LIMIT_INVEST_IP_MAX,
+            30,
+            "RATE_LIMIT_INVEST_IP_MAX"
+          ),
+        },
+        wallet: {
+          windowMs: parsePositiveInteger(
+            process.env.RATE_LIMIT_INVEST_WALLET_WINDOW_MS,
+            60000,
+            "RATE_LIMIT_INVEST_WALLET_WINDOW_MS"
+          ),
+          max: parsePositiveInteger(
+            process.env.RATE_LIMIT_INVEST_WALLET_MAX,
+            10,
+            "RATE_LIMIT_INVEST_WALLET_MAX"
+          ),
+        },
+      },
+      invoiceSubmit: {
+        ip: {
+          windowMs: parsePositiveInteger(
+            process.env.RATE_LIMIT_INVOICE_SUBMIT_IP_WINDOW_MS,
+            60000,
+            "RATE_LIMIT_INVOICE_SUBMIT_IP_WINDOW_MS"
+          ),
+          max: parsePositiveInteger(
+            process.env.RATE_LIMIT_INVOICE_SUBMIT_IP_MAX,
+            30,
+            "RATE_LIMIT_INVOICE_SUBMIT_IP_MAX"
+          ),
+        },
+        wallet: {
+          windowMs: parsePositiveInteger(
+            process.env.RATE_LIMIT_INVOICE_SUBMIT_WALLET_WINDOW_MS,
+            60000,
+            "RATE_LIMIT_INVOICE_SUBMIT_WALLET_WINDOW_MS"
+          ),
+          max: parsePositiveInteger(
+            process.env.RATE_LIMIT_INVOICE_SUBMIT_WALLET_MAX,
+            10,
+            "RATE_LIMIT_INVOICE_SUBMIT_WALLET_MAX"
+          ),
+        },
       },
     },
 
@@ -260,18 +385,60 @@ export function getConfig(): AppConfig {
       ),
     },
 
+    maturity: {
+      enabled: parseBoolean(
+        process.env.INVOICE_MATURITY_JOB_ENABLED,
+        DEFAULT_MATURITY_ENABLED,
+        "INVOICE_MATURITY_JOB_ENABLED"
+      ),
+      intervalMs: parsePositiveInteger(
+        process.env.INVOICE_MATURITY_JOB_INTERVAL_MS,
+        DEFAULT_MATURITY_INTERVAL_MS,
+        "INVOICE_MATURITY_JOB_INTERVAL_MS"
+      ),
+      batchSize: parsePositiveInteger(
+        process.env.INVOICE_MATURITY_JOB_BATCH_SIZE,
+        DEFAULT_MATURITY_BATCH_SIZE,
+        "INVOICE_MATURITY_JOB_BATCH_SIZE"
+      ),
+    },
+
+    sorobanIndexer: {
+      enabled: parseBoolean(
+        process.env.SOROBAN_EVENT_INDEXER_ENABLED,
+        false,
+        "SOROBAN_EVENT_INDEXER_ENABLED"
+      ),
+      intervalMs: parsePositiveInteger(
+        process.env.SOROBAN_EVENT_INDEXER_INTERVAL_MS,
+        DEFAULT_SOROBAN_INDEXER_INTERVAL_MS,
+        "SOROBAN_EVENT_INDEXER_INTERVAL_MS"
+      ),
+      lagAlertThresholdLedgers: parsePositiveInteger(
+        process.env.SOROBAN_EVENT_INDEXER_LAG_THRESHOLD_LEDGERS,
+        DEFAULT_SOROBAN_INDEXER_LAG_THRESHOLD_LEDGERS,
+        "SOROBAN_EVENT_INDEXER_LAG_THRESHOLD_LEDGERS"
+      ),
+    },
+
     stellar: resolveNetwork(process.env.STELLAR_NETWORK),
 
     sorobanEscrow: {
       enabled: parseBoolean(process.env.SOROBAN_ESCROW_ENABLED, false, "SOROBAN_ESCROW_ENABLED"),
       contractId: process.env.SOROBAN_ESCROW_CONTRACT_ID ?? null,
       fundingMode: "wallet_xdr",
+      rpcUrl: process.env.SOROBAN_RPC_URL ?? null,
     },
 
     ipfs: {
       apiUrl: requireString(process.env.IPFS_API_URL, "IPFS_API_URL"),
       jwt: requireString(process.env.IPFS_JWT, "IPFS_JWT"),
-      gatewayUrl: process.env.IPFS_GATEWAY_URL ?? DEFAULT_IPFS_GATEWAY_URL,
+      gatewayUrl: process.env.IPFS_GATEWAY_URL || DEFAULT_IPFS_GATEWAY_URL,
+      gatewayTokenTtlSeconds: parsePositiveInteger(
+        process.env.IPFS_GATEWAY_TOKEN_TTL_SECONDS,
+        DEFAULT_IPFS_GATEWAY_TOKEN_TTL_SECONDS,
+        "IPFS_GATEWAY_TOKEN_TTL_SECONDS"
+      ),
       maxFileSizeMB: parsePositiveInteger(
         process.env.IPFS_MAX_FILE_SIZE_MB,
         DEFAULT_IPFS_MAX_FILE_SIZE_MB,
@@ -295,22 +462,35 @@ export function getConfig(): AppConfig {
       },
     },
 
-    documentExport: {
-      signingSecret: process.env.DOCUMENT_EXPORT_SIGNING_SECRET ?? requireString(process.env.JWT_SECRET, "JWT_SECRET"),
-      urlTtlMinutes: parsePositiveInteger(
-        process.env.DOCUMENT_EXPORT_URL_TTL_MINUTES,
-        DEFAULT_DOCUMENT_EXPORT_URL_TTL_MINUTES,
-        "DOCUMENT_EXPORT_URL_TTL_MINUTES"
-      ),
-      tempDir: process.env.DOCUMENT_EXPORT_TEMP_DIR ?? path.join(os.tmpdir(), "invoice-exports"),
-    },
-
     kyc: {
       skipVerification: parseBoolean(
         process.env.SKIP_KYC_VERIFICATION,
         process.env.NODE_ENV !== "production",
         "SKIP_KYC_VERIFICATION"
       ),
+      webhookSecret: process.env.KYC_WEBHOOK_SECRET ?? "",
+    },
+
+    admin: {
+      ipWhitelist: parseCsv(process.env.ADMIN_IP_WHITELIST),
+      wallets: parseCsv(process.env.ADMIN_WALLETS),
+    },
+
+    termsVersion: (process.env.TERMS_VERSION?.trim() || "1"),
+
+    cache: {
+      redisUrl: process.env.REDIS_URL || undefined,
+      invoicesListTtlSeconds: parsePositiveInteger(
+        process.env.CACHE_TTL_INVOICES_LIST,
+        DEFAULT_CACHE_TTL_INVOICES_LIST,
+        "CACHE_TTL_INVOICES_LIST"
+      ),
+      invoiceDetailTtlSeconds: parsePositiveInteger(
+        process.env.CACHE_TTL_INVOICE_DETAIL,
+        DEFAULT_CACHE_TTL_INVOICE_DETAIL,
+        "CACHE_TTL_INVOICE_DETAIL"
+      ),
+      enabled: parseBoolean(process.env.CACHE_ENABLED, DEFAULT_CACHE_ENABLED, "CACHE_ENABLED"),
     },
   };
 }

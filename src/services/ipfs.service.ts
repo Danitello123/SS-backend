@@ -1,6 +1,7 @@
 import type { AppConfig } from "../config/env";
 import { ServiceError } from "../utils/service-error";
 import type { AppLogger } from "../observability/logger";
+import { withCorrelationHeaders } from "../observability/request-context";
 
 export interface IPFSUploadResult {
   hash: string;
@@ -35,7 +36,8 @@ export class IPFSService {
     fileBuffer: Buffer,
     filename: string,
     mimeType: string,
-    invoiceId?: string
+    invoiceId?: string,
+    attemptNumber: number = 1
   ): Promise<IPFSUploadResult> {
     // Validate file size
     const fileSizeMB = fileBuffer.length / (1024 * 1024);
@@ -56,18 +58,29 @@ export class IPFSService {
       );
     }
 
+    // Log upload attempt before making the HTTP call
+    const gateway = new URL(this.config.apiUrl).hostname;
+    this.logger.info("IPFS document upload attempt", {
+      operation: "pin_file_to_ipfs",
+      invoice_id: invoiceId,
+      file_size_bytes: fileBuffer.length,
+      gateway,
+      attempt_number: attemptNumber,
+      initiated_at: new Date().toISOString(),
+    });
+
     try {
       const formData = new FormData();
-      const blob = new Blob([fileBuffer], { type: mimeType });
+      const blob = new Blob([new Uint8Array(fileBuffer)], { type: mimeType });
       formData.append("file", blob, filename);
 
       const response = await this.fetchImplementation(
         `${this.config.apiUrl}/pinning/pinFileToIPFS`,
         {
           method: "POST",
-          headers: {
+          headers: withCorrelationHeaders({
             Authorization: `Bearer ${this.config.jwt}`,
-          },
+          }),
           body: formData,
         }
       );
@@ -77,8 +90,13 @@ export class IPFSService {
         const errorReason = `${response.status} ${response.statusText}`;
 
         this.logger.warn("IPFS document upload failed", {
+          operation: "pin_file_to_ipfs",
           invoice_id: invoiceId,
           error_reason: errorReason,
+          attempt_number: attemptNumber,
+          retry_state: attemptNumber > 1 ? "retry" : "initial",
+          next_action: "retry_or_surface_failure",
+          terminal: true,
           failed_at: new Date().toISOString(),
         });
 
@@ -111,8 +129,13 @@ export class IPFSService {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
 
       this.logger.warn("IPFS document upload failed", {
+        operation: "pin_file_to_ipfs",
         invoice_id: invoiceId,
         error_reason: errorMessage,
+        attempt_number: attemptNumber,
+        retry_state: attemptNumber > 1 ? "retry" : "initial",
+        next_action: "retry_or_surface_failure",
+        terminal: true,
         failed_at: new Date().toISOString(),
       });
 
@@ -124,30 +147,64 @@ export class IPFSService {
     }
   }
 
-  /**
-   * Downloads one previously-pinned file by CID from the configured IPFS
-   * gateway (issue #589's bulk export needs the bytes back, not just a CID).
-   */
-  async fetchFile(cid: string): Promise<Buffer> {
-    const url = `${this.config.gatewayUrl.replace(/\/+$/, "")}/${cid}`;
+  async generateSignedUrl(cid: string): Promise<string> {
+    const gatewayUrl = this.config.gatewayUrl;
+    // Pinata V3 uses /files/CID, but /ipfs/CID is often supported on gateways. 
+    // We'll use /ipfs/CID as default for backward compatibility with v2 uploads.
+    const targetUrl = `${gatewayUrl}/ipfs/${cid}`;
+    const expires = this.config.gatewayTokenTtlSeconds;
 
-    let response: Response;
+    this.logger.info("Generating signed IPFS gateway URL", {
+      cid,
+      expires_in_seconds: expires,
+    });
+
     try {
-      response = await this.fetchImplementation(url);
+      const response = await this.fetchImplementation(
+        `${this.config.apiUrl}/v3/files/private/download_link`,
+        {
+          method: "POST",
+          headers: withCorrelationHeaders({
+            Authorization: `Bearer ${this.config.jwt}`,
+            "Content-Type": "application/json",
+          }),
+          body: JSON.stringify({
+            url: targetUrl,
+            expires,
+            date: Math.floor(Date.now() / 1000),
+            method: "GET"
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Pinata API returned ${response.status}: ${errorText}`);
+      }
+
+      const result = await response.json() as { data?: string; url?: string };
+      // Pinata V3 usually returns the url directly or inside a data wrapper
+      const signedUrl = result.data || result.url;
+      
+      if (!signedUrl) {
+         throw new Error("Pinata API did not return a valid URL in response");
+      }
+
+      return signedUrl;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      this.logger.warn("IPFS document fetch failed", { cid, error_reason: errorMessage });
-      throw new ServiceError("ipfs_fetch_error", `Failed to fetch ${cid} from IPFS gateway: ${errorMessage}`, 502);
-    }
+      if (error instanceof ServiceError) throw error;
+      
+      this.logger.error("Failed to generate signed IPFS URL", {
+        cid,
+        error: error instanceof Error ? error.message : String(error),
+      });
 
-    if (!response.ok) {
-      const errorReason = `${response.status} ${response.statusText}`;
-      this.logger.warn("IPFS document fetch failed", { cid, error_reason: errorReason });
-      throw new ServiceError("ipfs_fetch_failed", `IPFS gateway fetch failed for ${cid}: ${errorReason}`, 502);
+      throw new ServiceError(
+        "ipfs_document_unavailable",
+        "The requested IPFS document is currently unavailable from the gateway. Please try again in a few moments.",
+        503
+      );
     }
-
-    const arrayBuffer = await response.arrayBuffer();
-    return Buffer.from(arrayBuffer);
   }
 }
 

@@ -31,6 +31,7 @@ export class InvestmentController {
         invoiceId,
         investorId: user.id,
         investmentAmount,
+        investorWallet: user.stellarAddress,
       });
 
       return res.status(201).json({
@@ -38,7 +39,8 @@ export class InvestmentController {
         data: investment,
       });
     } catch (err: unknown) {
-      const statusCode = (err as { status?: number }).status || (err as { statusCode?: number }).statusCode || 400;
+      const statusCode =
+        (err as { status?: number }).status || (err as { statusCode?: number }).statusCode || 400;
       return res.status(statusCode).json({
         error: {
           code: (err as { code?: string }).code || "INTERNAL_ERROR",
@@ -62,7 +64,33 @@ export class InvestmentController {
         data: dashboard,
       });
     } catch (err: unknown) {
-      const statusCode = (err as { status?: number }).status || (err as { statusCode?: number }).statusCode || 500;
+      const statusCode =
+        (err as { status?: number }).status || (err as { statusCode?: number }).statusCode || 500;
+      return res.status(statusCode).json({
+        error: {
+          code: (err as { code?: string }).code || "INTERNAL_ERROR",
+          message: (err as { message?: string }).message || "Internal server error",
+        },
+      });
+    }
+  };
+
+  getInvestorAnalytics = async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const user = req.user;
+      if (!user) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const analytics = await this.investmentService.calculateInvestorAnalytics(user.id);
+
+      return res.status(200).json({
+        success: true,
+        data: analytics,
+      });
+    } catch (err: unknown) {
+      const statusCode =
+        (err as { status?: number }).status || (err as { statusCode?: number }).statusCode || 500;
       return res.status(statusCode).json({
         error: {
           code: (err as { code?: string }).code || "INTERNAL_ERROR",

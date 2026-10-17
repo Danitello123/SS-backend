@@ -173,6 +173,88 @@ describe("computeInvestorReturn", () => {
     });
   });
 
+  describe("pro-rata remainder: sum of returns + remainder equals total proceeds", () => {
+    it("100 proceeds among 3 equal investors yields 33 each and remainder 1", () => {
+      // Each investor has equal share (1/3) of 100 units
+      const totalFunded = 3_0000000n;
+      const proceeds = 100_0000000n;
+
+      const r1 = computeInvestorReturn(1_0000000n, totalFunded, proceeds);
+      const r2 = computeInvestorReturn(1_0000000n, totalFunded, proceeds);
+      const r3 = computeInvestorReturn(1_0000000n, totalFunded, proceeds);
+
+      expect(r1).toBe(33_3333333n);
+      expect(r2).toBe(33_3333333n);
+      expect(r3).toBe(33_3333333n);
+
+      const sum = r1 + r2 + r3;
+      const remainder = proceeds - sum;
+      expect(remainder).toBe(1n);
+      expect(sum + remainder).toBe(proceeds);
+    });
+
+    it("7 proceeds among 3 equal investors yields 2 each and remainder 1", () => {
+      const totalFunded = 3_0000000n;
+      const proceeds = 7_0000000n;
+
+      const r1 = computeInvestorReturn(1_0000000n, totalFunded, proceeds);
+      const r2 = computeInvestorReturn(1_0000000n, totalFunded, proceeds);
+      const r3 = computeInvestorReturn(1_0000000n, totalFunded, proceeds);
+
+      // floor(7/3) = 2.3333333, so each gets 2_3333333n
+      expect(r1).toBe(2_3333333n);
+      expect(r2).toBe(2_3333333n);
+      expect(r3).toBe(2_3333333n);
+
+      const sum = r1 + r2 + r3;
+      const remainder = proceeds - sum;
+      // 7_0000000 - 3 * 2_3333333 = 7_0000000 - 6_9999999 = 1
+      expect(remainder).toBe(1n);
+      expect(sum + remainder).toBe(proceeds);
+    });
+
+    it("10 proceeds split 1/3 and 2/3 yields 3 and 6 with remainder 1", () => {
+      const totalFunded = 3_0000000n;
+      const proceeds = 10_0000000n;
+
+      const investor1Share = computeInvestorReturn(1_0000000n, totalFunded, proceeds);
+      const investor2Share = computeInvestorReturn(2_0000000n, totalFunded, proceeds);
+
+      // floor(10/3) = 3.3333333
+      expect(investor1Share).toBe(3_3333333n);
+      // floor(20/3) = 6.6666666
+      expect(investor2Share).toBe(6_6666666n);
+
+      const sum = investor1Share + investor2Share;
+      const remainder = proceeds - sum;
+      // 10_0000000 - (3_3333333 + 6_6666666) = 10_0000000 - 9_9999999 = 1
+      expect(remainder).toBe(1n);
+      expect(sum + remainder).toBe(proceeds);
+    });
+
+    it("remainder is never assigned to any investor (sum never exceeds proceeds)", () => {
+      // Assert for all three cases combined that remainder is non-negative
+      const testCases = [
+        { funded: [1_0000000n, 1_0000000n, 1_0000000n], total: 3_0000000n, proceeds: 100_0000000n },
+        { funded: [1_0000000n, 1_0000000n, 1_0000000n], total: 3_0000000n, proceeds: 7_0000000n },
+        { funded: [1_0000000n, 2_0000000n], total: 3_0000000n, proceeds: 10_0000000n },
+      ];
+
+      for (const tc of testCases) {
+        let sum = 0n;
+        for (const amount of tc.funded) {
+          const ret = computeInvestorReturn(amount, tc.total, tc.proceeds);
+          expect(ret).toBeGreaterThanOrEqual(0n);
+          expect(ret).toBeLessThanOrEqual(tc.proceeds);
+          sum += ret;
+        }
+        const remainder = tc.proceeds - sum;
+        expect(remainder).toBeGreaterThanOrEqual(0n);
+        expect(sum + remainder).toBe(tc.proceeds);
+      }
+    });
+  });
+
   describe("precision handling", () => {
     it("should handle 7 decimal place precision correctly", () => {
       // 1.0000001 stroops out of 10 total, 100 proceeds
