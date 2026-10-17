@@ -18,8 +18,8 @@ describe("FeeScheduleService", () => {
   });
 
   beforeEach(async () => {
-    await dataSource.getRepository(FeeSchedule).clear();
     await dataSource.getRepository(FeeScheduleHistory).clear();
+    await dataSource.getRepository(FeeSchedule).clear();
   });
 
   describe("getCurrentFeeSchedule", () => {
@@ -49,7 +49,9 @@ describe("FeeScheduleService", () => {
     });
 
     it("should throw error when no active schedule exists", async () => {
-      await expect(feeScheduleService.getCurrentFeeSchedule()).rejects.toThrow("NO_ACTIVE_FEE_SCHEDULE");
+      await expect(feeScheduleService.getCurrentFeeSchedule()).rejects.toMatchObject({
+        code: "NO_ACTIVE_FEE_SCHEDULE",
+      });
     });
   });
 
@@ -108,7 +110,7 @@ describe("FeeScheduleService", () => {
           "GDADMINWALLET",
           "admin"
         )
-      ).rejects.toThrow("INVALID_FEE_RATE");
+      ).rejects.toMatchObject({ code: "INVALID_FEE_RATE" });
     });
 
     it("should require at least one fee to update", async () => {
@@ -125,7 +127,7 @@ describe("FeeScheduleService", () => {
 
       await expect(
         feeScheduleService.updateFeeSchedule({}, "GDADMINWALLET", "admin")
-      ).rejects.toThrow("NO_CHANGES");
+      ).rejects.toMatchObject({ code: "NO_CHANGES" });
     });
   });
 
