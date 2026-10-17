@@ -25,16 +25,16 @@ export function createRefundRouter({
     requireInvestor(),
     async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
       try {
-        const { invoiceId } = req.params;
-        const wallet = req.user?.wallet;
+        const invoiceId = String(req.params.invoiceId);
+        const wallet = req.user?.stellarAddress || (req.user as unknown as { wallet?: string })?.wallet;
 
         if (!wallet) {
-          throw new HttpError("Wallet not found in request", 401);
+          throw new HttpError(401, "Wallet not found in request");
         }
 
         const { canRefund, reason } = await refundService.canRefund(invoiceId);
         if (!canRefund) {
-          throw new HttpError(reason || "Cannot refund invoice", 400);
+          throw new HttpError(400, reason || "Cannot refund invoice");
         }
 
         await refundService.refundInvestment(invoiceId, wallet);
@@ -47,7 +47,7 @@ export function createRefundRouter({
         });
       } catch (error) {
         if (error instanceof ServiceError) {
-          return next(new HttpError(error.message, error.statusCode));
+          return next(new HttpError(error.statusCode, error.message));
         }
         next(error);
       }
@@ -60,10 +60,10 @@ export function createRefundRouter({
     requireInvestor(),
     async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
       try {
-        const wallet = req.user?.wallet;
+        const wallet = req.user?.stellarAddress || (req.user as unknown as { wallet?: string })?.wallet;
 
         if (!wallet) {
-          throw new HttpError("Wallet not found in request", 401);
+          throw new HttpError(401, "Wallet not found in request");
         }
 
         const refundableInvoices = await refundService.getRefundableInvoices(wallet);

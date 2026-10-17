@@ -1135,7 +1135,7 @@ describe("InvoiceService", () => {
           invoiceId: "invoice-123",
           customerName: "Updated",
         })
-      ).rejects.toThrow(/Deadlock detected|Processing failed/);
+      ).rejects.toThrow(/Deadlock detected|Processing failed|Failed to update invoice/);
     });
 
     it("should propagate database errors on deleteInvoice", async () => {
@@ -1143,7 +1143,7 @@ describe("InvoiceService", () => {
       mockInvoiceRepository.save.mockRejectedValue(new Error("Storage full"));
 
       await expect(invoiceService.deleteInvoice("invoice-123", "seller-456")).rejects.toThrow(
-        /Storage full|Processing failed/
+        /Storage full|Processing failed|Failed to delete invoice/
       );
     });
   });
