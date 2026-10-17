@@ -491,6 +491,31 @@ describe("POST /invoices/:id/invest (#465)", () => {
       ).rejects.toMatchObject({ code: "invoice_expired", statusCode: 422 });
     });
 
+    it("rejects an investment once the funding deadline has passed, even with a future due date", async () => {
+      // dueDate (repayment) is still a week out, but the funding campaign's
+      // own deadline already closed - investInInvoice only checked dueDate,
+      // letting investors buy into a campaign that should have been closed.
+      const invoice = makeInvoice({
+        dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        fundingDeadline: new Date(Date.now() - 1000),
+      });
+
+      await expect(
+        createService(createFakeDatabase(invoice)).investInInvoice(investInput(invoice))
+      ).rejects.toMatchObject({ code: "funding_deadline_passed", statusCode: 422 });
+    });
+
+    it("accepts an investment when the funding deadline is still open", async () => {
+      const invoice = makeInvoice({
+        dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        fundingDeadline: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      });
+
+      await expect(
+        createService(createFakeDatabase(invoice)).investInInvoice(investInput(invoice))
+      ).resolves.toBeDefined();
+    });
+
     it("rejects the seller investing in their own invoice", async () => {
       const invoice = makeInvoice();
       await expect(

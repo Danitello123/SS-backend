@@ -444,6 +444,9 @@ export class InvestmentService {
                 422
               );
             }
+            if (invoice.fundingDeadline && new Date(invoice.fundingDeadline) < new Date()) {
+              throw new ServiceError("funding_deadline_passed", "Funding deadline has passed", 422);
+            }
             if (invoice.sellerId === investorId) {
               throw new ServiceError(
                 "SELF_DEALING",
@@ -715,6 +718,11 @@ export class InvestmentService {
               "Invoice has passed its due date and is no longer accepting investments",
               422
             );
+          }
+          // 3b. Reject if the funding campaign's own deadline has passed,
+          // independent of the (later) repayment due date.
+          if (invoice.fundingDeadline && new Date(invoice.fundingDeadline) < new Date()) {
+            throw new ServiceError("funding_deadline_passed", "Funding deadline has passed", 422);
           }
 
           // 4. Prevent self-dealing
