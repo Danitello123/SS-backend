@@ -48,6 +48,7 @@ import { createSwapRouter } from "./routes/swap.routes";
 import { createRoyaltiesRouter } from "./routes/royalties.routes";
 import { createSubscriptionsRouter } from "./routes/subscriptions.routes";
 import { createOnboardingRouter } from "./routes/onboarding.routes";
+import { createIssuerReputationRouter } from "./routes/issuer-reputation.routes";
 
 import type { AuthService } from "./services/auth.service";
 import type { NotificationService } from "./services/notification.service";
@@ -66,6 +67,10 @@ import type { PortfolioService } from "./services/portfolio.service";
 import type { SecondaryMarketService } from "./services/secondary-market.service";
 import type { WatchlistService } from "./services/watchlist.service";
 import type { SettlementWorker } from "./workers/settlement.worker";
+import type { FeeScheduleService } from "./services/fee-schedule.service";
+import type { IssuerReputationService } from "./services/issuer-reputation.service";
+import type { InvestorRiskProfileService } from "./services/investor-risk-profile.service";
+import type { InvoiceDraftService } from "./services/invoice-draft.service";
 
 import dataSource from "./config/database";
 import { getRedisClient } from "./config/redis";
@@ -201,6 +206,10 @@ export interface AppDependencies {
   extensionService?: InvoiceExtensionService;
   portfolioService?: PortfolioService;
   adminMetricsService?: AdminMetricsService;
+  feeScheduleService?: FeeScheduleService;
+  issuerReputationService?: IssuerReputationService;
+  investorRiskProfileService?: InvestorRiskProfileService;
+  draftService?: InvoiceDraftService;
   invoiceEscrowContractService?: import("./services/stellar/invoice-escrow-contract.service").InvoiceEscrowContractService;
   logger?: AppLogger;
   metricsEnabled?: boolean;
@@ -251,6 +260,10 @@ export function createApp({
   portfolioService,
   extensionService,
   adminMetricsService,
+  feeScheduleService,
+  issuerReputationService,
+  investorRiskProfileService,
+  draftService,
   invoiceEscrowContractService,
   logger: appLogger = logger,
   metricsEnabled = true,
@@ -424,6 +437,7 @@ export function createApp({
       contractId: pauseGuardContractId,
       invoiceSearchService,
       extensionService,
+      draftService,
     });
     app.use("/api/v1/invoices", invoiceRouter);
     app.use("/invoices", invoiceRouter);
@@ -443,7 +457,11 @@ export function createApp({
 
   // Issue #473 — accreditation acknowledgement
   if (acknowledgementService) {
-    const investorRouter = createInvestorRouter({ authService, acknowledgementService });
+    const investorRouter = createInvestorRouter({
+      authService,
+      acknowledgementService,
+      riskProfileService: investorRiskProfileService,
+    });
     app.use("/api/v1/investors", investorRouter);
     app.use("/investors", investorRouter);
   }
@@ -534,6 +552,18 @@ export function createApp({
     );
   }
 
+  // ---- Issuer Reputation (issue #593) ----
+  if (issuerReputationService && authService) {
+    app.use(
+      "/api/v1",
+      createIssuerReputationRouter({
+        issuerReputationService,
+        authService,
+        adminWallets: config?.admin?.wallets || [],
+      })
+    );
+  }
+
   if (swapService) {
     const swapRouter = createSwapRouter({ swapService, authService });
     app.use("/api/v1/swaps", swapRouter);
@@ -553,9 +583,9 @@ export function createApp({
         extensionService,
         metricsService: adminMetricsService,
         adminSettlementService,
-        adminWallets: config.admin.wallets || [],
-        invoiceEscrowContractService
-
+        adminWallets: config.admin?.wallets || [],
+        invoiceEscrowContractService,
+        feeScheduleService
       })
     );
   }

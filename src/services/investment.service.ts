@@ -21,6 +21,7 @@ import type { InvestmentNotifier } from "../lib/invoice-notifications";
 import { logger } from "../observability/logger";
 import { stroopsToXlm } from "../lib/stellar-format";
 import { truncateWalletAddress } from "../lib/kyc";
+import type { InvestorRiskProfileService } from "./investor-risk-profile.service";
 
 // Formula for expected return:
 // Investor's share of the invoice face value (amount) proportional to their contribution to the fundable amount (netAmount).
@@ -136,7 +137,8 @@ export class InvestmentService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly stateMachine: InvoiceStateMachine = createInvoiceStateMachine(),
-    private readonly investmentNotifier?: InvestmentNotifier
+    private readonly investmentNotifier?: InvestmentNotifier,
+    private readonly riskProfileService?: InvestorRiskProfileService
   ) {}
 
   /**
@@ -597,6 +599,40 @@ export class InvestmentService {
 
     await this.assertAccreditationAcknowledged(investorWallet);
 
+    // Check risk profile suitability (issue #595)
+    if (this.riskProfileService) {
+      try {
+        const invoice = await this.dataSource.getRepository(Invoice).findOne({ where: { id: invoiceId } });
+        if (invoice) {
+          // Determine invoice risk category from risk score
+          const riskScore = invoice.riskScore ? parseFloat(invoice.riskScore) : 50;
+          let invoiceRiskCategory: "low" | "medium" | "high" = "medium";
+          if (riskScore < 33) invoiceRiskCategory = "low";
+          else if (riskScore > 66) invoiceRiskCategory = "high";
+
+          const suitability = await this.riskProfileService.checkSuitability(investorWallet, invoiceRiskCategory);
+
+          if (!suitability.suitable) {
+            throw new ServiceError(
+              "SUITABILITY_CHECK_FAILED",
+              suitability.reason || "Investment not suitable for your risk profile",
+              403
+            );
+          }
+        }
+      } catch (error) {
+        if (error instanceof ServiceError && error.code === "SUITABILITY_CHECK_FAILED") {
+          throw error;
+        }
+        // Log but don't fail investment if suitability check fails unexpectedly
+        logger.warn("investment.suitability_check_error", {
+          investorWallet,
+          invoiceId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
     // Validate investment amount
     const amount = new Decimal(investmentAmount);
     if (amount.isNegative() || amount.isZero()) {
@@ -807,7 +843,8 @@ export class InvestmentService {
 export function createInvestmentService(
   dataSource: DataSource,
   stateMachine?: InvoiceStateMachine,
-  investmentNotifier?: InvestmentNotifier
+  investmentNotifier?: InvestmentNotifier,
+  riskProfileService?: InvestorRiskProfileService
 ): InvestmentService {
-  return new InvestmentService(dataSource, stateMachine, investmentNotifier);
+  return new InvestmentService(dataSource, stateMachine, investmentNotifier, riskProfileService);
 }
