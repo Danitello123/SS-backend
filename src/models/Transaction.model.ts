@@ -21,6 +21,10 @@ import { logger } from "../observability/logger";
 @Index("idx_transactions_user_status_timestamp", ["userId", "status", "timestamp"])
 @Index("idx_transactions_investment_status", ["investmentId", "status"])
 @Index("idx_transactions_invoice_status", ["invoiceId", "status"])
+@Index("uq_transactions_stellar_payment", ["stellarTxHash", "stellarOperationIndex"], {
+  unique: true,
+  where: '"stellar_tx_hash" IS NOT NULL AND "stellar_operation_index" IS NOT NULL',
+})
 export class Transaction {
   @PrimaryGeneratedColumn("uuid")
   id!: string;

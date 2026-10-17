@@ -133,6 +133,14 @@ describe("Horizon Reconciliation Worker Integration Test", () => {
                 investmentRepo.findOne({ where: { id } }),
               findTransactionsByInvestmentIdForUpdate: (investmentId: string) =>
                 transactionRepo.find({ where: { investmentId } }),
+              findInvestmentsByStellarPayment: (stellarTxHash: string, operationIndex: number) =>
+                investmentRepo.find({
+                  where: { transactionHash: stellarTxHash, stellarOperationIndex: operationIndex },
+                }),
+              findTransactionsByStellarPayment: (stellarTxHash: string, operationIndex: number) =>
+                transactionRepo.find({
+                  where: { stellarTxHash, stellarOperationIndex: operationIndex },
+                }),
               saveInvestment: (investment: Investment) => investmentRepo.save(investment),
               saveTransaction: (transaction: Transaction) => transactionRepo.save(transaction),
               createTransaction: (input: Partial<Transaction>) => transactionRepo.create(input),
@@ -201,6 +209,7 @@ describe("Horizon Reconciliation Worker Integration Test", () => {
           investmentAmount: "500.0000",
           expectedReturn: "526.3158",
           status: InvestmentStatus.PENDING,
+          investorWallet: investor.stellarAddress,
           transactionHash: "test-tx-hash-123",
           stellarOperationIndex: 0,
           createdAt: new Date(Date.now() - 10000), // 10 seconds ago
@@ -227,6 +236,7 @@ describe("Horizon Reconciliation Worker Integration Test", () => {
                   asset_issuer: "GUSDC123",
                   amount: "500.0000",
                   to: "GESCROW123",
+                  source_account: investor.stellarAddress,
                 },
               ],
             },
@@ -370,6 +380,7 @@ describe("Horizon Reconciliation Worker Integration Test", () => {
           investmentAmount: "250.0000",
           expectedReturn: "263.1579",
           status: InvestmentStatus.PENDING,
+          investorWallet: investor.stellarAddress,
           transactionHash: "test-tx-hash-log",
           stellarOperationIndex: 0,
           createdAt: new Date(Date.now() - 10000),
@@ -396,6 +407,7 @@ describe("Horizon Reconciliation Worker Integration Test", () => {
                   asset_issuer: "GUSDC123",
                   amount: "250.0000",
                   to: "GESCROW123",
+                  source_account: investor.stellarAddress,
                 },
               ],
             },

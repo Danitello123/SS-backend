@@ -1,4 +1,4 @@
-import { DataSource, Repository } from "typeorm";
+import { DataSource, QueryFailedError, Repository } from "typeorm";
 import type { PaymentVerificationConfig } from "../../config/stellar";
 import { Investment } from "../../models/Investment.model";
 import { Transaction } from "../../models/Transaction.model";
@@ -21,6 +21,7 @@ interface HorizonPaymentOperation {
   asset_issuer?: string;
   amount?: string;
   to?: string;
+  source_account?: string;
 }
 
 interface HorizonOperationsResponse {
@@ -48,6 +49,7 @@ interface PaymentMatch {
   operationIndex: number;
   amount: string;
   destination: string;
+  sourceAccount: string;
   assetCode: string;
   assetIssuer: string;
 }
@@ -59,6 +61,14 @@ interface InvestmentReader {
 interface PaymentVerificationUnitOfWork {
   findInvestmentByIdForUpdate(investmentId: string): Promise<Investment | null>;
   findTransactionsByInvestmentIdForUpdate(investmentId: string): Promise<Transaction[]>;
+  findInvestmentsByStellarPayment(
+    stellarTxHash: string,
+    operationIndex: number
+  ): Promise<Investment[]>;
+  findTransactionsByStellarPayment(
+    stellarTxHash: string,
+    operationIndex: number
+  ): Promise<Transaction[]>;
   saveInvestment(investment: Investment): Promise<Investment>;
   saveTransaction(transaction: Transaction): Promise<Transaction>;
   createTransaction(input: Partial<Transaction>): Transaction;
@@ -118,14 +128,23 @@ export class VerifyPaymentService {
         investment.stellarOperationIndex ===
           (input.operationIndex ?? investment.stellarOperationIndex)
       ) {
-        return {
-          outcome: "already_verified",
-          investmentId: investment.id,
-          stellarTxHash: input.stellarTxHash,
-          operationIndex: investment.stellarOperationIndex ?? input.operationIndex ?? 0,
-          transactionId: "",
-          status: InvestmentStatus.CONFIRMED,
-        };
+        return this.transactionRunner.runInTransaction(async (unitOfWork) => {
+          await this.assertPaymentNotCreditedToAnotherInvestment(
+            unitOfWork,
+            investment.id,
+            input.stellarTxHash,
+            investment.stellarOperationIndex ?? input.operationIndex ?? 0
+          );
+
+          return {
+            outcome: "already_verified" as const,
+            investmentId: investment.id,
+            stellarTxHash: input.stellarTxHash,
+            operationIndex: investment.stellarOperationIndex ?? input.operationIndex ?? 0,
+            transactionId: "",
+            status: InvestmentStatus.CONFIRMED,
+          };
+        });
       }
 
       throw new ServiceError(
@@ -138,10 +157,12 @@ export class VerifyPaymentService {
     const matchedPayment = await this.fetchAndValidatePayment(
       input.stellarTxHash,
       investment.investmentAmount,
+      investment.investorWallet ?? null,
       input.operationIndex
     );
 
-    return this.transactionRunner.runInTransaction(async (unitOfWork) => {
+    try {
+      return await this.transactionRunner.runInTransaction(async (unitOfWork) => {
       const lockedInvestment = await unitOfWork.findInvestmentByIdForUpdate(input.investmentId);
 
       if (!lockedInvestment) {
@@ -151,6 +172,14 @@ export class VerifyPaymentService {
       const linkedTransactions = await unitOfWork.findTransactionsByInvestmentIdForUpdate(
         lockedInvestment.id
       );
+
+      if (matchedPayment.sourceAccount !== lockedInvestment.investorWallet) {
+        throw new ServiceError(
+          "invalid_payment",
+          "The Stellar payment source does not match the investment investor wallet.",
+          422
+        );
+      }
 
       if (linkedTransactions.length > 1) {
         throw new ServiceError(
@@ -167,6 +196,13 @@ export class VerifyPaymentService {
           lockedInvestment.transactionHash === input.stellarTxHash &&
           lockedInvestment.stellarOperationIndex === matchedPayment.operationIndex
         ) {
+          await this.assertPaymentNotCreditedToAnotherInvestment(
+            unitOfWork,
+            lockedInvestment.id,
+            input.stellarTxHash,
+            matchedPayment.operationIndex
+          );
+
           return {
             outcome: "already_verified" as const,
             investmentId: lockedInvestment.id,
@@ -183,6 +219,13 @@ export class VerifyPaymentService {
           409
         );
       }
+
+      await this.assertPaymentNotCreditedToAnotherInvestment(
+        unitOfWork,
+        lockedInvestment.id,
+        input.stellarTxHash,
+        matchedPayment.operationIndex
+      );
 
       const existingTransaction = linkedTransactions[0];
 
@@ -248,12 +291,50 @@ export class VerifyPaymentService {
         transactionId: savedTransaction.id,
         status: InvestmentStatus.CONFIRMED as const,
       };
-    });
+      });
+    } catch (error) {
+      if (isStellarPaymentUniqueViolation(error)) {
+        throw new ServiceError(
+          "payment_already_used",
+          "This Stellar payment operation has already been credited to another investment.",
+          409
+        );
+      }
+      throw error;
+    }
+  }
+
+  private async assertPaymentNotCreditedToAnotherInvestment(
+    unitOfWork: PaymentVerificationUnitOfWork,
+    investmentId: string,
+    stellarTxHash: string,
+    operationIndex: number
+  ): Promise<void> {
+    const matchingInvestments = await unitOfWork.findInvestmentsByStellarPayment(
+      stellarTxHash,
+      operationIndex
+    );
+    const matchingTransactions = await unitOfWork.findTransactionsByStellarPayment(
+      stellarTxHash,
+      operationIndex
+    );
+
+    if (
+      matchingInvestments.some((candidate) => candidate.id !== investmentId) ||
+      matchingTransactions.some((candidate) => candidate.investmentId !== investmentId)
+    ) {
+      throw new ServiceError(
+        "payment_already_used",
+        "This Stellar payment operation has already been credited to another investment.",
+        409
+      );
+    }
   }
 
   private async fetchAndValidatePayment(
     stellarTxHash: string,
     expectedAmount: string,
+    investorWallet: string | null,
     operationIndex?: number
   ): Promise<PaymentMatch> {
     const transaction = normalizeHorizonTransaction(
@@ -290,6 +371,8 @@ export class VerifyPaymentService {
         operation.assetCode === this.config.usdcAssetCode &&
         operation.assetIssuer === this.config.usdcAssetIssuer &&
         operation.destination === this.config.escrowPublicKey &&
+        investorWallet !== null &&
+        operation.sourceAccount === investorWallet &&
         operation.amount !== null &&
         amountsWithinDelta(operation.amount, expectedAmount, this.config.allowedAmountDelta)
       );
@@ -298,7 +381,7 @@ export class VerifyPaymentService {
     if (matchingOperations.length === 0) {
       throw new ServiceError(
         "invalid_payment",
-        "No Stellar payment operation matched the expected asset, amount, and destination.",
+        "No Stellar payment operation matched the expected investor, asset, amount, and destination.",
         422
       );
     }
@@ -317,6 +400,7 @@ export class VerifyPaymentService {
       operationIndex: match.operationIndex,
       amount: match.amount ?? expectedAmount,
       destination: match.destination ?? "",
+      sourceAccount: match.sourceAccount ?? "",
       assetCode: match.assetCode ?? "",
       assetIssuer: match.assetIssuer ?? "",
     };
@@ -406,6 +490,14 @@ class TypeOrmTransactionRunner implements PaymentTransactionRunner {
           manager.getRepository(Transaction).find({
             where: { investmentId },
           }),
+        findInvestmentsByStellarPayment: (stellarTxHash: string, operationIndex: number) =>
+          manager.getRepository(Investment).find({
+            where: { transactionHash: stellarTxHash, stellarOperationIndex: operationIndex },
+          }),
+        findTransactionsByStellarPayment: (stellarTxHash: string, operationIndex: number) =>
+          manager.getRepository(Transaction).find({
+            where: { stellarTxHash, stellarOperationIndex: operationIndex },
+          }),
         saveInvestment: (investment: Investment) =>
           manager.getRepository(Investment).save(investment),
         saveTransaction: (transaction: Transaction) =>
@@ -429,6 +521,19 @@ export function createVerifyPaymentService(
 }
 
 export class RetryableHorizonError extends Error {}
+
+function isStellarPaymentUniqueViolation(error: unknown): boolean {
+  if (!(error instanceof QueryFailedError)) {
+    return false;
+  }
+
+  const driverError = error.driverError as { code?: string; constraint?: string };
+  return (
+    driverError.code === "23505" &&
+    (driverError.constraint === "uq_investments_stellar_payment" ||
+      driverError.constraint === "uq_transactions_stellar_payment")
+  );
+}
 
 function ensureTrailingSlash(value: string): string {
   return value.endsWith("/") ? value : `${value}/`;

@@ -27,6 +27,7 @@ function createInvestment(overrides: Partial<Investment> = {}): Investment {
     expectedReturn: overrides.expectedReturn ?? "105.0000",
     actualReturn: overrides.actualReturn ?? null,
     status: overrides.status ?? InvestmentStatus.PENDING,
+    investorWallet: overrides.investorWallet ?? "GINVESTORTEST",
     transactionHash: overrides.transactionHash ?? null,
     stellarOperationIndex: overrides.stellarOperationIndex ?? null,
     createdAt: overrides.createdAt ?? new Date(),
@@ -71,6 +72,7 @@ function successfulHorizonResponses(amount: string) {
               asset_issuer: "GDUKMGUGDZQK6YHZZ7KQJX2BQPJYVY5W7C2D4GMXQ3MNK4V2ZXN5R4OT",
               amount,
               to: "GCFXROWPUBKEYEXAMPLE7KQJX2BQPJYVY5W7C2D4GMXQ3MNK4V2ZXNOPE",
+              source_account: "GINVESTORTEST",
             },
           ],
         },
@@ -115,6 +117,20 @@ function createServiceContext(invoiceId: string) {
             investmentStore.get(investmentId) ?? null,
           findTransactionsByInvestmentIdForUpdate: async (investmentId) =>
             transactions.get(investmentId) ?? [],
+          findInvestmentsByStellarPayment: async (stellarTxHash, operationIndex) =>
+            [...investmentStore.values()].filter(
+              (candidate) =>
+                candidate.transactionHash === stellarTxHash &&
+                candidate.stellarOperationIndex === operationIndex
+            ),
+          findTransactionsByStellarPayment: async (stellarTxHash, operationIndex) =>
+            [...transactions.values()]
+              .flat()
+              .filter(
+                (candidate) =>
+                  candidate.stellarTxHash === stellarTxHash &&
+                  candidate.stellarOperationIndex === operationIndex
+              ),
           saveInvestment,
           saveTransaction,
           createTransaction: (input) => createTransaction(input),
@@ -165,6 +181,33 @@ describe("VerifyPaymentService idempotency (transaction hash as dedup key)", () 
     expect(context.transactions.get(investment.id)).toHaveLength(1);
     expect(context.saveInvestment).toHaveBeenCalledTimes(1);
     expect(context.saveTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a payment operation that already confirmed another investment", async () => {
+    const context = createServiceContext(crypto.randomUUID());
+    const firstInvestment = context.addInvestment();
+    const secondInvestment = context.addInvestment();
+    const stellarTxHash = "reused-payment-hash";
+
+    context.fetchImplementation
+      .mockResolvedValueOnce(successfulHorizonResponses("100.0000")[0])
+      .mockResolvedValueOnce(successfulHorizonResponses("100.0000")[1])
+      .mockResolvedValueOnce(successfulHorizonResponses("100.0000")[0])
+      .mockResolvedValueOnce(successfulHorizonResponses("100.0000")[1]);
+
+    await context.service.verifyPayment({
+      investmentId: firstInvestment.id,
+      stellarTxHash,
+    });
+
+    await expect(
+      context.service.verifyPayment({
+        investmentId: secondInvestment.id,
+        stellarTxHash,
+      })
+    ).rejects.toMatchObject({ code: "payment_already_used", statusCode: 409 });
+
+    expect(context.investmentStore.get(secondInvestment.id)?.status).toBe(InvestmentStatus.PENDING);
   });
 
   it("returns success without creating a duplicate record on a repeated call with the same hash", async () => {

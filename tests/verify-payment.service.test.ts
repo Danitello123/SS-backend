@@ -28,6 +28,7 @@ function createInvestment(overrides: Partial<Investment> = {}): Investment {
     expectedReturn: overrides.expectedReturn ?? "105.0000",
     actualReturn: overrides.actualReturn ?? null,
     status: overrides.status ?? InvestmentStatus.PENDING,
+    investorWallet: overrides.investorWallet ?? "GINVESTORTEST",
     transactionHash: overrides.transactionHash ?? null,
     stellarOperationIndex: overrides.stellarOperationIndex ?? null,
     createdAt: overrides.createdAt ?? new Date(),
@@ -79,6 +80,20 @@ function createServiceContext() {
             investmentStore.get(investmentId) ?? null,
           findTransactionsByInvestmentIdForUpdate: async (investmentId) =>
             transactions.get(investmentId) ?? [],
+          findInvestmentsByStellarPayment: async (stellarTxHash, operationIndex) =>
+            [...investmentStore.values()].filter(
+              (candidate) =>
+                candidate.transactionHash === stellarTxHash &&
+                candidate.stellarOperationIndex === operationIndex
+            ),
+          findTransactionsByStellarPayment: async (stellarTxHash, operationIndex) =>
+            [...transactions.values()]
+              .flat()
+              .filter(
+                (candidate) =>
+                  candidate.stellarTxHash === stellarTxHash &&
+                  candidate.stellarOperationIndex === operationIndex
+              ),
           saveInvestment: async (lockedInvestment) => {
             investmentStore.set(lockedInvestment.id, lockedInvestment);
             return lockedInvestment;
@@ -143,6 +158,7 @@ describe("VerifyPaymentService", () => {
                   asset_issuer: "GDUKMGUGDZQK6YHZZ7KQJX2BQPJYVY5W7C2D4GMXQ3MNK4V2ZXN5R4OT",
                   amount: "100.0000",
                   to: "GCFXROWPUBKEYEXAMPLE7KQJX2BQPJYVY5W7C2D4GMXQ3MNK4V2ZXNOPE",
+                  source_account: "GINVESTORTEST",
                 },
               ],
             },
@@ -207,6 +223,7 @@ describe("VerifyPaymentService", () => {
                   asset_issuer: "GDUKMGUGDZQK6YHZZ7KQJX2BQPJYVY5W7C2D4GMXQ3MNK4V2ZXN5R4OT",
                   amount: "100.0000",
                   to: "GCFXROWPUBKEYEXAMPLE7KQJX2BQPJYVY5W7C2D4GMXQ3MNK4V2ZXNOPE",
+                  source_account: "GINVESTORTEST",
                 },
               ],
             },
@@ -223,6 +240,49 @@ describe("VerifyPaymentService", () => {
     expect(context.fetchImplementation).toHaveBeenCalledTimes(3);
     expect(context.sleep).toHaveBeenCalledTimes(1);
     expect(context.sleep).toHaveBeenCalledWith(10);
+  });
+
+  it("rejects a payment whose source account does not match the investor wallet", async () => {
+    const context = createServiceContext();
+
+    context.fetchImplementation
+      .mockResolvedValueOnce(
+        createMockResponse({
+          ok: true,
+          status: 200,
+          body: { successful: true },
+        })
+      )
+      .mockResolvedValueOnce(
+        createMockResponse({
+          ok: true,
+          status: 200,
+          body: {
+            _embedded: {
+              records: [
+                {
+                  type: "payment",
+                  asset_code: "USDC",
+                  asset_issuer: "GDUKMGUGDZQK6YHZZ7KQJX2BQPJYVY5W7C2D4GMXQ3MNK4V2ZXN5R4OT",
+                  amount: "100.0000",
+                  to: "GCFXROWPUBKEYEXAMPLE7KQJX2BQPJYVY5W7C2D4GMXQ3MNK4V2ZXNOPE",
+                  source_account: "GANOTHERINVESTOR",
+                },
+              ],
+            },
+          },
+        })
+      );
+
+    await expect(
+      context.service.verifyPayment({
+        investmentId: context.investment.id,
+        stellarTxHash: "another-investors-payment",
+      })
+    ).rejects.toMatchObject({
+      code: "invalid_payment",
+      statusCode: 422,
+    });
   });
 
   it("returns stable service errors when Horizon cannot find the transaction", async () => {

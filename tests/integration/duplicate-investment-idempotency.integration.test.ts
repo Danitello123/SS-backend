@@ -74,6 +74,14 @@ describe("Duplicate investment funding idempotency (issue #219)", () => {
                 investmentRepo.findOne({ where: { id } }),
               findTransactionsByInvestmentIdForUpdate: (investmentId: string) =>
                 transactionRepo.find({ where: { investmentId } }),
+              findInvestmentsByStellarPayment: (stellarTxHash: string, operationIndex: number) =>
+                investmentRepo.find({
+                  where: { transactionHash: stellarTxHash, stellarOperationIndex: operationIndex },
+                }),
+              findTransactionsByStellarPayment: (stellarTxHash: string, operationIndex: number) =>
+                transactionRepo.find({
+                  where: { stellarTxHash, stellarOperationIndex: operationIndex },
+                }),
               saveInvestment: (inv: Investment) => investmentRepo.save(inv),
               saveTransaction: (tx: Transaction) => transactionRepo.save(tx),
               createTransaction: (input: Partial<Transaction>) => transactionRepo.create(input),
@@ -107,6 +115,7 @@ describe("Duplicate investment funding idempotency (issue #219)", () => {
                 asset_issuer: "GUSDC123",
                 amount,
                 to: "GESCROW123",
+                source_account: "GINVESTOR123",
               },
             ],
           },
@@ -200,6 +209,7 @@ describe("Duplicate investment funding idempotency (issue #219)", () => {
         investmentAmount: "500.0000",
         expectedReturn: "526.3158",
         status: InvestmentStatus.PENDING,
+        investorWallet: investor.stellarAddress,
       })
     );
 
@@ -265,6 +275,7 @@ describe("Duplicate investment funding idempotency (issue #219)", () => {
         investmentAmount: "250.0000",
         expectedReturn: "263.1579",
         status: InvestmentStatus.PENDING,
+        investorWallet: investor.stellarAddress,
       })
     );
 
@@ -308,6 +319,7 @@ describe("Duplicate investment funding idempotency (issue #219)", () => {
         investmentAmount: "120.0000",
         expectedReturn: "126.3158",
         status: InvestmentStatus.CONFIRMED,
+        investorWallet: investor.stellarAddress,
         transactionHash: stellarTxHash,
         stellarOperationIndex: 0,
       })

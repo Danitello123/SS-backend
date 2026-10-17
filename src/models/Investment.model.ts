@@ -19,6 +19,10 @@ import type { Invoice } from "./Invoice.model";
 @Index("uq_investments_invoice_wallet_block", ["invoiceId", "investorWallet", "fundingBlock"], {
   unique: true,
 })
+@Index("uq_investments_stellar_payment", ["transactionHash", "stellarOperationIndex"], {
+  unique: true,
+  where: '"transaction_hash" IS NOT NULL AND "stellar_operation_index" IS NOT NULL',
+})
 export class Investment {
   @PrimaryGeneratedColumn("uuid")
   id!: string;

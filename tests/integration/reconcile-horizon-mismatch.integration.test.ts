@@ -136,6 +136,14 @@ describe("Horizon Reconciliation Worker Integration Test - mismatch handling", (
                 investmentRepo.findOne({ where: { id } }),
               findTransactionsByInvestmentIdForUpdate: (investmentId: string) =>
                 transactionRepo.find({ where: { investmentId } }),
+              findInvestmentsByStellarPayment: (stellarTxHash: string, operationIndex: number) =>
+                investmentRepo.find({
+                  where: { transactionHash: stellarTxHash, stellarOperationIndex: operationIndex },
+                }),
+              findTransactionsByStellarPayment: (stellarTxHash: string, operationIndex: number) =>
+                transactionRepo.find({
+                  where: { stellarTxHash, stellarOperationIndex: operationIndex },
+                }),
               saveInvestment: (investment: Investment) => investmentRepo.save(investment),
               saveTransaction: (transaction: Transaction) => transactionRepo.save(transaction),
               createTransaction: (input: Partial<Transaction>) => transactionRepo.create(input),
@@ -295,6 +303,17 @@ describe("Horizon Reconciliation Worker Integration Test - mismatch handling", (
                   investmentRepo.findOne({ where: { id } }),
                 findTransactionsByInvestmentIdForUpdate: (investmentId: string) =>
                   transactionRepo.find({ where: { investmentId } }),
+                findInvestmentsByStellarPayment: (stellarTxHash: string, operationIndex: number) =>
+                  investmentRepo.find({
+                    where: {
+                      transactionHash: stellarTxHash,
+                      stellarOperationIndex: operationIndex,
+                    },
+                  }),
+                findTransactionsByStellarPayment: (stellarTxHash: string, operationIndex: number) =>
+                  transactionRepo.find({
+                    where: { stellarTxHash, stellarOperationIndex: operationIndex },
+                  }),
                 saveInvestment: (inv: Investment) => investmentRepo.save(inv),
                 saveTransaction: (tx: Transaction) => transactionRepo.save(tx),
                 createTransaction: (input: Partial<Transaction>) => transactionRepo.create(input),
@@ -535,6 +554,7 @@ describe("Horizon Reconciliation Worker Integration Test - mismatch handling", (
                       asset_issuer: "GUSDC123",
                       amount: "600.0000",
                       to: "GESCROW123",
+                      source_account: investor.stellarAddress,
                     },
                   ],
                 },
@@ -568,6 +588,7 @@ describe("Horizon Reconciliation Worker Integration Test - mismatch handling", (
           investmentAmount: "600.0000",
           expectedReturn: "631.5789",
           status: InvestmentStatus.PENDING,
+          investorWallet: investor.stellarAddress,
           transactionHash: "test-tx-mismatch-then-valid-good",
           stellarOperationIndex: 0,
           createdAt: new Date(Date.now() - 10000),
