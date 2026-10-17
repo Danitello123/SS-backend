@@ -263,10 +263,29 @@ export async function bootstrap(): Promise<{
   // ---- Start settlement worker cron (hourly) ----
   settlementWorker.start("0 * * * *");
 
+  // All deployed Soroban contracts whose events feed the indexer. The
+  // read-model projections (creator key, ACL, curve migration, atomic swap,
+  // royalty, dividend) dispatch by event topic rather than contract id, so
+  // their events are only ever seen if the contract that emits them is
+  // actually polled here.
+  const sorobanEventContractIds = Array.from(
+    new Set(
+      [
+        config.sorobanEscrow.contractId,
+        sorobanConfig.escrowContractId,
+        sorobanConfig.paymentDistributorContractId,
+        sorobanConfig.subscriptionContractId,
+        sorobanConfig.tokenContractId,
+      ].filter((id): id is string => Boolean(id))
+    )
+  );
+
   const eventIndexer =
-    config.sorobanIndexer.enabled && config.sorobanEscrow.contractId && config.sorobanEscrow.rpcUrl
+    config.sorobanIndexer.enabled &&
+    sorobanEventContractIds.length > 0 &&
+    config.sorobanEscrow.rpcUrl
       ? new EventIndexerService({
-          contractIds: [config.sorobanEscrow.contractId],
+          contractIds: sorobanEventContractIds,
           rpcUrl: config.sorobanEscrow.rpcUrl,
           dataSource,
           logger,

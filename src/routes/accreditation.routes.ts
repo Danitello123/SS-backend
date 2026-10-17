@@ -9,11 +9,21 @@ import { AccreditationTier } from "../models/InvestorAccreditation.model";
 export interface AccreditationRouterDependencies {
   authService: AuthService;
   accreditationService: InvestorAccreditationService;
+  adminWallets?: string[];
+}
+
+interface WalletParamsRequest extends AuthenticatedRequest {
+  params: { wallet: string };
+}
+
+interface WalletEligibilityParamsRequest extends AuthenticatedRequest {
+  params: { wallet: string; invoiceId: string };
 }
 
 export function createAccreditationRouter({
   authService,
   accreditationService,
+  adminWallets = [],
 }: AccreditationRouterDependencies): Router {
   const router = Router();
   const auth = createAuthMiddleware(authService);
@@ -21,7 +31,7 @@ export function createAccreditationRouter({
   router.get(
     "/:wallet",
     auth,
-    async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    async (req: WalletParamsRequest, res: Response, next: NextFunction) => {
       try {
         const wallet = String(req.params.wallet);
         const accreditation = await accreditationService.getAccreditation(wallet);
@@ -41,8 +51,8 @@ export function createAccreditationRouter({
   router.patch(
     "/:wallet",
     auth,
-    requireAdmin(),
-    async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    requireAdmin(adminWallets),
+    async (req: WalletParamsRequest, res: Response, next: NextFunction) => {
       try {
         const wallet = String(req.params.wallet);
         const { tier, verificationSource } = req.body;
@@ -72,7 +82,7 @@ export function createAccreditationRouter({
   router.get(
     "/:wallet/eligibility/:invoiceId",
     auth,
-    async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    async (req: WalletEligibilityParamsRequest, res: Response, next: NextFunction) => {
       try {
         const wallet = String(req.params.wallet);
         const invoiceId = String(req.params.invoiceId);

@@ -9,6 +9,7 @@ import { Investment } from "../models/Investment.model";
 import { InvestorAcknowledgement } from "../models/InvestorAcknowledgement.model";
 import { InvoiceStatus, InvestmentStatus } from "../types/enums";
 import { ServiceError } from "../utils/service-error";
+import { isPastDueDate } from "../utils/date.utils";
 import { Decimal } from "decimal.js";
 import { getCurrentTermsVersion } from "./investor-acknowledgement.service";
 import {
@@ -278,7 +279,7 @@ export class InvestmentService {
         (investment.status === InvestmentStatus.PENDING ||
           investment.status === InvestmentStatus.CONFIRMED) &&
         invoice?.dueDate &&
-        new Date(invoice.dueDate) < now
+        isPastDueDate(invoice.dueDate, now)
       ) {
         statusDistribution.overdue += 1;
       }
@@ -436,12 +437,15 @@ export class InvestmentService {
                 422
               );
             }
-            if (invoice.dueDate && new Date(invoice.dueDate) < new Date()) {
+            if (invoice.dueDate && isPastDueDate(invoice.dueDate)) {
               throw new ServiceError(
                 "invoice_expired",
                 "Invoice has passed its due date and is no longer accepting investments",
                 422
               );
+            }
+            if (invoice.fundingDeadline && new Date(invoice.fundingDeadline) < new Date()) {
+              throw new ServiceError("funding_deadline_passed", "Funding deadline has passed", 422);
             }
             if (invoice.sellerId === investorId) {
               throw new ServiceError(
@@ -708,12 +712,17 @@ export class InvestmentService {
           }
 
           // 3. Reject if the invoice has passed its due date
-          if (invoice.dueDate && new Date(invoice.dueDate) < new Date()) {
+          if (invoice.dueDate && isPastDueDate(invoice.dueDate)) {
             throw new ServiceError(
               "invoice_expired",
               "Invoice has passed its due date and is no longer accepting investments",
               422
             );
+          }
+          // 3b. Reject if the funding campaign's own deadline has passed,
+          // independent of the (later) repayment due date.
+          if (invoice.fundingDeadline && new Date(invoice.fundingDeadline) < new Date()) {
+            throw new ServiceError("funding_deadline_passed", "Funding deadline has passed", 422);
           }
 
           // 4. Prevent self-dealing
