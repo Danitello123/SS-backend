@@ -5,7 +5,6 @@ import {
   ACCREDITATION_LIMITS,
 } from "../models/InvestorAccreditation.model";
 import { Invoice } from "../models/Invoice.model";
-import { ServiceError } from "../utils/service-error";
 import Decimal from "decimal.js";
 
 export class InvestorAccreditationService {
