@@ -15,23 +15,23 @@ import { Invoice } from "./Invoice.model";
 @Index("idx_price_history_invoice_date_range", ["invoiceId", "createdAt"])
 export class SecondaryMarketPriceHistory {
   @PrimaryGeneratedColumn("uuid")
-  id: string;
+  id!: string;
 
   @Column({ type: "uuid" })
-  invoiceId: string;
+  invoiceId!: string;
 
   @ManyToOne(() => Invoice)
   @JoinColumn({ name: "invoiceId" })
-  invoice: Invoice;
+  invoice!: Invoice;
 
   @Column({ type: "decimal", precision: 18, scale: 8 })
-  askPrice: Decimal;
+  askPrice!: Decimal;
 
   @Column({ type: "integer", default: 1 })
-  listingCount: number;
+  listingCount!: number;
 
   @CreateDateColumn()
-  createdAt: Date;
+  createdAt!: Date;
 }
 
 export interface PriceHistoryPoint {

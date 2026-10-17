@@ -18,7 +18,7 @@
   },
   "scripts": {
     "dev": "nodemon --exec ts-node -r tsconfig-paths/register src/index.ts",
-    "clean": "rm -rf dist coverage",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true }); require('node:fs').rmSync('coverage', { recursive: true, force: true });\"",
     "prebuild": "npm run clean",
     "build": "tsc -p tsconfig.json",
     "start": "node -r tsconfig-paths/register dist/index.js",

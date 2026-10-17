@@ -1,4 +1,4 @@
-import { Repository, LessThan } from "typeorm";
+import { Repository } from "typeorm";
 import { Invoice } from "../models/Invoice.model";
 import { Investment } from "../models/Investment.model";
 import { InvoiceStatus } from "../types/enums";
@@ -44,7 +44,7 @@ export class InvoiceRefundService {
     const invoice = await this.invoiceRepo.findOne({ where: { id: invoiceId } });
 
     if (!invoice) {
-      throw new ServiceError("Invoice not found", 404);
+      throw new ServiceError("invoice_not_found", "Invoice not found", 404);
     }
 
     const investment = await this.investmentRepo.findOne({
@@ -55,18 +55,18 @@ export class InvoiceRefundService {
     });
 
     if (!investment) {
-      throw new ServiceError("Investment record not found", 404);
+      throw new ServiceError("investment_not_found", "Investment record not found", 404);
     }
 
     const { canRefund, reason } = await this.canRefund(invoiceId);
     if (!canRefund) {
-      throw new ServiceError(reason || "Cannot refund invoice", 400);
+      throw new ServiceError("invoice_not_refundable", reason || "Cannot refund invoice", 400);
     }
 
     logger.info("Processing refund", {
       invoiceId,
       investorWallet: walletAddress,
-      amount: investment.amount,
+      amount: investment.investmentAmount,
     });
 
     await this.investmentRepo.remove(investment);
@@ -84,11 +84,13 @@ export class InvoiceRefundService {
   async getRefundableInvoices(walletAddress: string): Promise<Invoice[]> {
     const now = new Date();
 
-    return this.invoiceRepo.find({
-      where: {
-        fundingDeadline: LessThan(now),
-        status: InvoiceStatus.PUBLISHED,
-      },
-    });
+    return this.invoiceRepo
+      .createQueryBuilder("invoice")
+      .innerJoin("invoice.investments", "investment")
+      .where("investment.investorWallet = :walletAddress", { walletAddress })
+      .andWhere("invoice.fundingDeadline < :now", { now })
+      .andWhere("invoice.status = :status", { status: InvoiceStatus.PUBLISHED })
+      .distinct(true)
+      .getMany();
   }
 }

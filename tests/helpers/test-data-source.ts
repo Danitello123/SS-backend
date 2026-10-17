@@ -6,6 +6,12 @@ import { InvoiceDraft } from "../../src/models/InvoiceDraft.model";
 import { User } from "../../src/models/User.model";
 import { Invoice } from "../../src/models/Invoice.model";
 import { Investment } from "../../src/models/Investment.model";
+import { Transaction } from "../../src/models/Transaction.model";
+import { KYCVerification } from "../../src/models/KYCVerification.model";
+import { KycHistory } from "../../src/models/KycHistory.model";
+import { Notification } from "../../src/models/Notification.model";
+import { SecondaryListing } from "../../src/models/SecondaryListing.model";
+import { Watchlist } from "../../src/models/Watchlist.model";
 
 export async function createTestDataSource(): Promise<DataSource> {
   const dataSource = new DataSource({
@@ -21,6 +27,12 @@ export async function createTestDataSource(): Promise<DataSource> {
       User,
       Invoice,
       Investment,
+      Transaction,
+      KYCVerification,
+      KycHistory,
+      Notification,
+      SecondaryListing,
+      Watchlist,
     ],
     synchronize: false,
     logging: false,

@@ -8,6 +8,11 @@ import type {
 } from "../services/stellar/verify-payment.service";
 import { Investment } from "../models/Investment.model";
 import { Transaction } from "../models/Transaction.model";
+import {
+  PendingStellarTransaction,
+  type PendingStellarTransactionStatus,
+} from "../models/PendingStellarTransaction.model";
+import type { ConfirmationStatus } from "../services/stellar/invoice-escrow-contract.service";
 import { InvestmentStatus, TransactionStatus, TransactionType } from "../types/enums";
 import { ServiceError } from "../utils/service-error";
 import { classifyReconciliationError } from "../services/stellar/reconciliation-retry";
@@ -341,6 +346,174 @@ export function createReconcilePendingStellarStateWorker(
     ),
     paymentVerifier,
     config,
+    logger,
+  });
+}
+
+export interface PendingStellarConfirmationRepository {
+  findPendingConfirmations(limit: number): Promise<PendingStellarTransaction[]>;
+  save(transaction: PendingStellarTransaction): Promise<PendingStellarTransaction>;
+}
+
+export interface PendingStellarConfirmationVerifier {
+  getTransactionStatus(
+    txHash: string,
+  ): Promise<{ status: ConfirmationStatus; ledger: number | null }>;
+}
+
+export interface PendingStellarConfirmationWorkerDependencies {
+  repository: PendingStellarConfirmationRepository;
+  verifier: PendingStellarConfirmationVerifier;
+  intervalMs: number;
+  batchSize: number;
+  logger: AppLogger;
+  setIntervalFn?: typeof setInterval;
+  clearIntervalFn?: typeof clearInterval;
+  now?: () => Date;
+}
+
+export class PendingStellarConfirmationWorker {
+  private readonly repository: PendingStellarConfirmationRepository;
+  private readonly verifier: PendingStellarConfirmationVerifier;
+  private readonly intervalMs: number;
+  private readonly batchSize: number;
+  private readonly logger: AppLogger;
+  private readonly setIntervalFn: typeof setInterval;
+  private readonly clearIntervalFn: typeof clearInterval;
+  private readonly now: () => Date;
+  private intervalHandle: IntervalHandle | null = null;
+  private inFlightTick: Promise<void> | null = null;
+
+  constructor(dependencies: PendingStellarConfirmationWorkerDependencies) {
+    this.repository = dependencies.repository;
+    this.verifier = dependencies.verifier;
+    this.intervalMs = dependencies.intervalMs;
+    this.batchSize = dependencies.batchSize;
+    this.logger = dependencies.logger.child({
+      component: "pending-stellar-confirmation-worker",
+    });
+    this.setIntervalFn = dependencies.setIntervalFn ?? setInterval;
+    this.clearIntervalFn = dependencies.clearIntervalFn ?? clearInterval;
+    this.now = dependencies.now ?? (() => new Date());
+  }
+
+  start(): void {
+    if (this.intervalHandle) {
+      return;
+    }
+
+    this.logger.info("Starting pending Stellar confirmation worker.", {
+      intervalMs: this.intervalMs,
+      batchSize: this.batchSize,
+    });
+    void this.scheduleTick();
+    this.intervalHandle = this.setIntervalFn(() => {
+      void this.scheduleTick();
+    }, this.intervalMs);
+  }
+
+  async stop(): Promise<void> {
+    if (this.intervalHandle) {
+      this.clearIntervalFn(this.intervalHandle);
+      this.intervalHandle = null;
+    }
+    if (this.inFlightTick) {
+      await this.inFlightTick;
+    }
+    this.logger.info("Stopped pending Stellar confirmation worker.");
+  }
+
+  async runTick(): Promise<void> {
+    let pendingTransactions: PendingStellarTransaction[];
+    try {
+      pendingTransactions = await this.repository.findPendingConfirmations(this.batchSize);
+    } catch (error) {
+      this.logger.error("Failed to load pending Stellar transactions for reconciliation.", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+
+    for (const transaction of pendingTransactions) {
+      try {
+        const result = await this.verifier.getTransactionStatus(transaction.transactionHash);
+        transaction.lastCheckedAt = this.now();
+        if (result.status === "SUCCESS" || result.status === "FAILED") {
+          transaction.status = this.finalStatus(result.status);
+          transaction.ledger = result.ledger;
+        }
+        await this.repository.save(transaction);
+
+        if (transaction.status !== "PENDING_CONFIRMATION") {
+          this.logger.info("Reconciled pending Stellar transaction.", {
+            txHash: transaction.transactionHash,
+            contractId: transaction.contractId,
+            status: transaction.status,
+            ledger: transaction.ledger,
+          });
+        }
+      } catch (error) {
+        this.logger.warn("Unable to reconcile pending Stellar transaction.", {
+          txHash: transaction.transactionHash,
+          contractId: transaction.contractId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+
+  private async scheduleTick(): Promise<void> {
+    if (this.inFlightTick) {
+      this.logger.warn("Skipping pending Stellar confirmation tick because one is already running.");
+      return;
+    }
+    this.inFlightTick = this.runTick().finally(() => {
+      this.inFlightTick = null;
+    });
+    await this.inFlightTick;
+  }
+
+  private finalStatus(status: "SUCCESS" | "FAILED"): PendingStellarTransactionStatus {
+    return status === "SUCCESS" ? "COMPLETED" : "FAILED";
+  }
+}
+
+class TypeOrmPendingStellarConfirmationRepository
+  implements PendingStellarConfirmationRepository
+{
+  constructor(private readonly repository: Repository<PendingStellarTransaction>) {}
+
+  findPendingConfirmations(limit: number): Promise<PendingStellarTransaction[]> {
+    return this.repository
+      .createQueryBuilder("transaction")
+      .where("transaction.status = :status", { status: "PENDING_CONFIRMATION" })
+      .orderBy(
+        "COALESCE(transaction.lastCheckedAt, transaction.createdAt)",
+        "ASC",
+      )
+      .take(limit)
+      .getMany();
+  }
+
+  save(transaction: PendingStellarTransaction): Promise<PendingStellarTransaction> {
+    return this.repository.save(transaction);
+  }
+}
+
+export function createPendingStellarConfirmationWorker(
+  dataSource: DataSource,
+  verifier: PendingStellarConfirmationVerifier,
+  intervalMs: number,
+  batchSize: number,
+  logger: AppLogger,
+): PendingStellarConfirmationWorker {
+  return new PendingStellarConfirmationWorker({
+    repository: new TypeOrmPendingStellarConfirmationRepository(
+      dataSource.getRepository(PendingStellarTransaction),
+    ),
+    verifier,
+    intervalMs,
+    batchSize,
     logger,
   });
 }

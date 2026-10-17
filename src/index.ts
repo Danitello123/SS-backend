@@ -25,6 +25,7 @@ import {
 } from "./lib/notification-dispatcher";
 import { createInvestmentNotifier, createInvestorDirectory } from "./lib/invoice-notifications";
 import { Invoice } from "./models/Invoice.model";
+import { PendingStellarTransaction } from "./models/PendingStellarTransaction.model";
 import { createIPFSService } from "./services/ipfs.service";
 import { createInvestmentService } from "./services/investment.service";
 import { createSettlementService } from "./services/settlement.service";
@@ -48,6 +49,7 @@ import { createSecondaryMarketService } from "./services/secondary-market.servic
 import { createWatchlistService } from "./services/watchlist.service";
 import { createSettlementWorker } from "./workers/settlement.worker";
 import { scheduleAnalyticsSnapshotJob } from "./workers/analytics-snapshot.worker";
+import { createPendingStellarConfirmationWorker } from "./workers/reconcile-pending-stellar-state.worker";
 import { createFeeScheduleService } from "./services/fee-schedule.service";
 import { getRedisClient } from "./config/redis";
 import { createIssuerReputationService } from "./services/issuer-reputation.service";
@@ -128,6 +130,22 @@ export async function bootstrap(): Promise<{
             ...sorobanConfig,
             contractId: sorobanConfig.escrowContractId,
             networkPassphrase: sorobanConfig.networkPassphrase,
+            pendingTransactionRecorder: {
+              recordPendingTransaction: async (txHash: string, contractId: string) => {
+                await dataSource
+                  .getRepository(PendingStellarTransaction)
+                  .createQueryBuilder()
+                  .insert()
+                  .into(PendingStellarTransaction)
+                  .values({
+                    transactionHash: txHash,
+                    contractId,
+                    status: "PENDING_CONFIRMATION",
+                  })
+                  .orIgnore()
+                  .execute();
+              },
+            },
           },
           logger
         )
@@ -275,11 +293,28 @@ export async function bootstrap(): Promise<{
         })
       : undefined;
 
+  const pendingStellarConfirmationWorker = invoiceEscrowContract
+    ? createPendingStellarConfirmationWorker(
+        dataSource,
+        invoiceEscrowContract,
+        config.reconciliation.intervalMs,
+        config.reconciliation.batchSize,
+        logger,
+      )
+    : undefined;
+
+  if (pendingStellarConfirmationWorker) {
+    pendingStellarConfirmationWorker.start();
+  }
+
   if (eventIndexer) {
     eventIndexer.start(config.sorobanIndexer.intervalMs);
   }
 
   server.on("close", () => {
+    if (pendingStellarConfirmationWorker) {
+      void pendingStellarConfirmationWorker.stop();
+    }
     if (eventIndexer) {
       eventIndexer.stop();
     }

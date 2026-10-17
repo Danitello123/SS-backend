@@ -63,6 +63,9 @@ export interface InvoiceEscrowContractServiceDependencies {
   networkPassphrase?: string;
   platformSecretKey?: string;
   server?: SorobanRpc.Server;
+  pendingTransactionRecorder?: {
+    recordPendingTransaction(txHash: string, contractId: string): Promise<void>;
+  };
   logger?: AppLogger;
   confirmationPollMs?: number;
   confirmationAttempts?: number;
@@ -134,6 +137,7 @@ export class InvoiceEscrowContractService {
   private readonly contract: Contract;
   readonly contractId: string;
   private readonly rpcServer?: SorobanRpc.Server;
+  private readonly pendingTransactionRecorder?: InvoiceEscrowContractServiceDependencies["pendingTransactionRecorder"];
   private readonly networkPassphrase?: string;
   private readonly platformSecretKey?: string;
   private readonly logger: AppLogger;
@@ -167,6 +171,7 @@ export class InvoiceEscrowContractService {
       this.contract = new Contract(this.contractId);
       this.networkPassphrase = dependenciesOrContractId.networkPassphrase;
       this.platformSecretKey = dependenciesOrContractId.platformSecretKey;
+      this.pendingTransactionRecorder = dependenciesOrContractId.pendingTransactionRecorder;
       if (dependenciesOrContractId.server) {
         this.rpcServer = dependenciesOrContractId.server;
       } else if (dependenciesOrContractId.rpcUrl) {
@@ -499,6 +504,26 @@ export class InvoiceEscrowContractService {
       sorobanContractId: this.contractId,
       attempts: this.confirmationAttempts,
     });
+    if (this.pendingTransactionRecorder) {
+      try {
+        await this.pendingTransactionRecorder.recordPendingTransaction(
+          safeTxHash,
+          this.contractId,
+        );
+      } catch (error) {
+        this.logger.error("Failed to record unconfirmed Soroban transaction for reconciliation.", {
+          txHash: safeTxHash,
+          sorobanContractId: this.contractId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw new ServiceError(
+          "pending_transaction_record_failed",
+          "The submitted transaction could not be queued for confirmation reconciliation.",
+          503,
+          { txHash: safeTxHash },
+        );
+      }
+    }
     throw new ServiceError(
       "transaction_confirmation_timeout",
       "Timed out waiting for transaction confirmation on-chain.",
@@ -510,6 +535,25 @@ export class InvoiceEscrowContractService {
         lastLedger,
       },
     );
+  }
+
+  public async getTransactionStatus(
+    txHash: string,
+  ): Promise<{ status: ConfirmationStatus; ledger: number | null }> {
+    if (!this.rpcServer) {
+      throw new ServiceError(
+        "rpc_not_configured",
+        "Soroban RPC server is not configured for transaction status checks.",
+        503,
+      );
+    }
+
+    const result = await this.rpcServer.getTransaction(sanitizeString(txHash, "txHash"));
+    const status = this.extractStatus(result);
+    const ledger = status === "SUCCESS" && "ledger" in result
+      ? Number(result.ledger)
+      : null;
+    return { status, ledger };
   }
 
   /**

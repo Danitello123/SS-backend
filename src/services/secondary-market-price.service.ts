@@ -1,6 +1,7 @@
-import { Repository, Between, LessThan } from "typeorm";
+import { Repository, Between, LessThan, MoreThan } from "typeorm";
 import { SecondaryMarketPriceHistory, PriceHistoryPoint } from "../models/SecondaryMarketPriceHistory.model";
-import { SecondaryMarketListing } from "../models/SecondaryMarketListing.model";
+import { SecondaryListing } from "../models/SecondaryListing.model";
+import { ListingStatus } from "../types/enums";
 import Decimal from "decimal.js";
 import { logger } from "../observability/logger";
 
@@ -15,7 +16,7 @@ const RANGE_DAYS: Record<PriceRange, number> = {
 export class SecondaryMarketPriceService {
   constructor(
     private priceHistoryRepo: Repository<SecondaryMarketPriceHistory>,
-    private listingRepo: Repository<SecondaryMarketListing>
+    private listingRepo: Repository<SecondaryListing>
   ) {}
 
   async recordPrice(
@@ -47,14 +48,19 @@ export class SecondaryMarketPriceService {
     });
 
     const history = this.aggregatePrices(prices);
+    const now = new Date();
     const currentListings = await this.listingRepo.find({
-      where: { invoiceId, soldAt: null as any },
+      where: {
+        invoiceId,
+        status: ListingStatus.ACTIVE,
+        expiresAt: MoreThan(now),
+      },
     });
 
     let currentAvg = new Decimal(0);
     if (currentListings.length > 0) {
       const sum = currentListings.reduce(
-        (acc, l) => acc.plus(l.askPrice || 0),
+        (acc, listing) => acc.plus(listing.pricePerFraction),
         new Decimal(0)
       );
       currentAvg = sum.dividedBy(currentListings.length);
