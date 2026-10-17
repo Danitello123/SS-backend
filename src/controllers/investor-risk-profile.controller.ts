@@ -1,7 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { InvestorRiskProfileService, RiskProfileInput } from "../services/investor-risk-profile.service";
 import { AppError } from "../utils/http-error";
-import { logger } from "../observability/logger";
 import type { AuthenticatedRequest } from "../types/auth";
 
 export class InvestorRiskProfileController {

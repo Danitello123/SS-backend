@@ -157,7 +157,7 @@ async function probeDatabase(): Promise<"ok" | "degraded"> {
 }
 
 async function probeHorizon(): Promise<"ok" | "degraded"> {
-  const url = process.env.HORIZON_URL;
+  const url = process.env.STELLAR_HORIZON_URL ?? process.env.HORIZON_URL;
   if (!url) {
     return "ok";
   }

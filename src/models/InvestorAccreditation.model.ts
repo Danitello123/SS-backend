@@ -23,27 +23,27 @@ export const ACCREDITATION_LIMITS: Record<AccreditationTier, number> = {
 @Index("idx_investor_accreditation_wallet", ["walletAddress"], { unique: true })
 export class InvestorAccreditation {
   @PrimaryGeneratedColumn("uuid")
-  id: string;
+  id!: string;
 
   @Column({ type: "varchar", length: 256, unique: true })
-  walletAddress: string;
+  walletAddress!: string;
 
   @Column({
     type: "enum",
     enum: AccreditationTier,
     default: AccreditationTier.UNACCREDITED,
   })
-  tier: AccreditationTier;
+  tier!: AccreditationTier;
 
   @Column({ type: "timestamp", nullable: true })
-  verificationDate: Date | null;
+  verificationDate!: Date | null;
 
   @Column({ type: "varchar", length: 255, nullable: true })
-  verificationSource: string | null;
+  verificationSource!: string | null;
 
   @CreateDateColumn()
-  createdAt: Date;
+  createdAt!: Date;
 
   @UpdateDateColumn()
-  updatedAt: Date;
+  updatedAt!: Date;
 }

@@ -44,7 +44,7 @@ export class InvoiceRefundService {
     const invoice = await this.invoiceRepo.findOne({ where: { id: invoiceId } });
 
     if (!invoice) {
-      throw new ServiceError("Invoice not found", 404);
+      throw new ServiceError("INVOICE_NOT_FOUND", "Invoice not found", 404);
     }
 
     const investment = await this.investmentRepo.findOne({
@@ -55,18 +55,18 @@ export class InvoiceRefundService {
     });
 
     if (!investment) {
-      throw new ServiceError("Investment record not found", 404);
+      throw new ServiceError("INVESTMENT_NOT_FOUND", "Investment record not found", 404);
     }
 
     const { canRefund, reason } = await this.canRefund(invoiceId);
     if (!canRefund) {
-      throw new ServiceError(reason || "Cannot refund invoice", 400);
+      throw new ServiceError("REFUND_NOT_ALLOWED", reason || "Cannot refund invoice", 400);
     }
 
     logger.info("Processing refund", {
       invoiceId,
       investorWallet: walletAddress,
-      amount: investment.amount,
+      amount: investment.investmentAmount,
     });
 
     await this.investmentRepo.remove(investment);
@@ -88,6 +88,7 @@ export class InvoiceRefundService {
       where: {
         fundingDeadline: LessThan(now),
         status: InvoiceStatus.PUBLISHED,
+        investments: { investorWallet: walletAddress },
       },
     });
   }

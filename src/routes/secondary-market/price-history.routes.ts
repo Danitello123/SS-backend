@@ -22,11 +22,13 @@ export function createPriceHistoryRouter({
     auth,
     async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
       try {
-        const { invoiceId } = req.params;
+        const invoiceId = Array.isArray(req.params.invoiceId)
+          ? req.params.invoiceId[0]
+          : req.params.invoiceId;
         const range = (req.query.range as PriceRange) || "30d";
 
         if (!["7d", "30d", "all"].includes(range)) {
-          throw new HttpError("Invalid range parameter", 400);
+          throw new HttpError(400, "Invalid range parameter");
         }
 
         const { history, currentAvg } = await priceService.getPriceHistory(
