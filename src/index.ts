@@ -48,6 +48,10 @@ import { createSecondaryMarketService } from "./services/secondary-market.servic
 import { createWatchlistService } from "./services/watchlist.service";
 import { createSettlementWorker } from "./workers/settlement.worker";
 import { scheduleAnalyticsSnapshotJob } from "./workers/analytics-snapshot.worker";
+import {
+  scheduleSubscriptionExpiryJob,
+  buildSubscriptionExpiryNotifier,
+} from "./workers/subscription-expiry.worker";
 
 export async function bootstrap(): Promise<{
   server: Server;
@@ -235,6 +239,14 @@ export async function bootstrap(): Promise<{
   // ---- Start daily analytics snapshot cron (midnight UTC) ----
   const snapshotScheduler = scheduleAnalyticsSnapshotJob(dataSource);
 
+  // ---- Start daily subscription expiry notification check (midnight UTC) ----
+  const subscriptionExpiryNotifier = buildSubscriptionExpiryNotifier(
+    dataSource,
+    createNotificationService(dataSource),
+    logger
+  );
+  const subscriptionExpiryScheduler = scheduleSubscriptionExpiryJob(subscriptionExpiryNotifier, logger);
+
   // ---- Start settlement worker cron (hourly) ----
   settlementWorker.start("0 * * * *");
 
@@ -260,6 +272,7 @@ export async function bootstrap(): Promise<{
     }
     void maturityWorker.stop();
     snapshotScheduler.stop();
+    subscriptionExpiryScheduler.stop();
     settlementWorker.stop();
   });
 
