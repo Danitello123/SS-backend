@@ -10,6 +10,10 @@ export interface PriceHistoryRouterDependencies {
   priceService: SecondaryMarketPriceService;
 }
 
+interface InvoicePriceHistoryRequest extends AuthenticatedRequest {
+  params: { invoiceId: string };
+}
+
 export function createPriceHistoryRouter({
   authService,
   priceService,
@@ -20,13 +24,13 @@ export function createPriceHistoryRouter({
   router.get(
     "/invoices/:invoiceId/price-history",
     auth,
-    async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    async (req: InvoicePriceHistoryRequest, res: Response, next: NextFunction) => {
       try {
         const { invoiceId } = req.params;
         const range = (req.query.range as PriceRange) || "30d";
 
         if (!["7d", "30d", "all"].includes(range)) {
-          throw new HttpError("Invalid range parameter", 400);
+          throw new HttpError(400, "Invalid range parameter");
         }
 
         const { history, currentAvg } = await priceService.getPriceHistory(

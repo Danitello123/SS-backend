@@ -1,7 +1,6 @@
-import { Request, Response, NextFunction } from "express";
+import { Response, NextFunction } from "express";
 import { InvoiceDraftService, DraftData } from "../services/invoice-draft.service";
 import { AppError } from "../utils/http-error";
-import { logger } from "../observability/logger";
 import type { AuthenticatedRequest } from "../types/auth";
 
 export class InvoiceDraftController {
