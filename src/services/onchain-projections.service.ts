@@ -18,10 +18,15 @@ import {
   type CurveMigrationService,
 } from "./curve-migration.service";
 import {
+  createKeyMergeProposalService,
+  type KeyMergeProposalService,
+} from "./key-merge-proposal.service";
+import {
   createAclRepository,
   createCreatorKeyRepository,
   createCurveMigrationRepository,
   createDividendRepository,
+  createKeyMergeProposalRepository,
   createRoyaltyEarningsRepository,
   createSwapRepository,
 } from "./onchain-projection-repositories";
@@ -40,6 +45,7 @@ export interface OnchainProjections {
   creatorKeyService: CreatorKeyService;
   aclService: AclService;
   curveMigrationService: CurveMigrationService;
+  keyMergeProposalService: KeyMergeProposalService;
   swapService: AtomicSwapService;
   /** Issue #537 — creator royalty earnings and claim history. */
   royaltyEarningsService: RoyaltyEarningsService;
@@ -98,6 +104,10 @@ export function createOnchainProjections({
     ...(adminNotifier ? { adminNotifier } : {}),
   });
 
+  const keyMergeProposalService = createKeyMergeProposalService({
+    keyMergeProposalRepository: createKeyMergeProposalRepository(dataSource),
+  });
+
   const swapService = createAtomicSwapService({ swapRepository: createSwapRepository(dataSource) });
 
   const royaltyEarningsService = createRoyaltyEarningsService({
@@ -128,6 +138,7 @@ export function createOnchainProjections({
     creatorKeyService,
     aclService,
     curveMigrationService,
+    keyMergeProposalService,
     swapService,
     royaltyEarningsService,
     dividendDistributionService,
@@ -138,6 +149,7 @@ export function createOnchainProjections({
     creatorKeyService,
     aclService,
     curveMigrationService,
+    keyMergeProposalService,
     swapService,
     royaltyEarningsService,
     dividendDistributionService,

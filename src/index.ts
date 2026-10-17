@@ -120,7 +120,7 @@ export async function bootstrap(): Promise<{
     distributor && sorobanConfig.platformFeeRecipient
       ? { feeRecipient: sorobanConfig.platformFeeRecipient, feeBps: sorobanConfig.platformFeeBps }
       : undefined;
-  
+
   const invoiceEscrowContract =
     sorobanConfig.escrowContractId && sorobanConfig.rpcUrl && sorobanConfig.platformSecretKey
       ? new InvoiceEscrowContractService(
@@ -142,7 +142,7 @@ export async function bootstrap(): Promise<{
     notificationService,
     issuerReputationService
   );
-  
+
   const adminSettlementService =
     invoiceEscrowContract && notificationService
       ? createAdminSettlementService(
@@ -226,6 +226,7 @@ export async function bootstrap(): Promise<{
     aclService: projections.aclService,
     creatorKeyService: projections.creatorKeyService,
     curveMigrationService: projections.curveMigrationService,
+    keyMergeProposalService: projections.keyMergeProposalService,
     secondaryMarketService,
     watchlistService,
     settlementWorker,
