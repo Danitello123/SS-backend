@@ -1,13 +1,27 @@
-import { DataSource } from "typeorm";
+import { DataSource, getMetadataArgsStorage } from "typeorm";
 import { FeeSchedule, FeeScheduleHistory } from "../../src/models/FeeSchedule.model";
 import { IssuerReputation, IssuerReputationHistory } from "../../src/models/IssuerReputation.model";
 import { InvestorRiskProfile } from "../../src/models/InvestorRiskProfile.model";
 import { InvoiceDraft } from "../../src/models/InvoiceDraft.model";
-import { User } from "../../src/models/User.model";
-import { Invoice } from "../../src/models/Invoice.model";
-import { Investment } from "../../src/models/Investment.model";
+
+function patchEntityMetadataForSQLite(): void {
+  const columns = getMetadataArgsStorage().columns;
+  for (const col of columns) {
+    if (col.options.type === "timestamptz") {
+      col.options.type = "datetime" as any;
+    }
+    if (col.options.type === "jsonb") {
+      col.options.type = "text" as any;
+    }
+    if (col.options.type === "enum") {
+      col.options.type = "varchar" as any;
+    }
+  }
+}
 
 export async function createTestDataSource(): Promise<DataSource> {
+  patchEntityMetadataForSQLite();
+
   const dataSource = new DataSource({
     type: "sqlite",
     database: ":memory:",
@@ -18,9 +32,6 @@ export async function createTestDataSource(): Promise<DataSource> {
       IssuerReputationHistory,
       InvestorRiskProfile,
       InvoiceDraft,
-      User,
-      Invoice,
-      Investment,
     ],
     synchronize: false,
     logging: false,
