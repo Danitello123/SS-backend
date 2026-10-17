@@ -178,7 +178,6 @@ describe("InvoiceService", () => {
       mockInvoiceRepository.findOneBy.mockResolvedValue(mockInvoice);
       const creation = invoiceService.createInvoice(buildCreateInput());
 
-      await expect(creation).rejects.toBeInstanceOf(ServiceError);
       await expect(creation).rejects.toMatchObject({
         code: "invoice_number_exists",
         statusCode: 409,
@@ -695,17 +694,17 @@ describe("InvoiceService", () => {
       );
     });
 
-    it("should allow deleting a cancelled invoice", async () => {
+    it("should reject deleting a cancelled invoice", async () => {
       mockInvoiceRepository.findOne.mockResolvedValue(
         buildInvoice({ status: InvoiceStatus.CANCELLED })
       );
       mockInvoiceRepository.save.mockImplementation(async (invoice: Invoice) => invoice);
 
-      await invoiceService.deleteInvoice("invoice-123", "seller-456");
-
-      expect(mockInvoiceRepository.save).toHaveBeenCalledWith(
-        expect.objectContaining({ deletedAt: expect.any(Date) })
-      );
+      await expect(invoiceService.deleteInvoice("invoice-123", "seller-456")).rejects.toMatchObject({
+        code: "invalid_invoice_status",
+        statusCode: 400,
+      });
+      expect(mockInvoiceRepository.save).not.toHaveBeenCalled();
     });
 
     it("should return 404 when the invoice does not exist", async () => {
@@ -1197,8 +1196,32 @@ describe("InvoiceService", () => {
         );
         expect(stateMachine.dispatch).toHaveBeenCalledTimes(1);
       });
+    });
+  // ============ REPOSITORY ERROR HANDLING ============
+  describe("repository error handling", () => {
+    it("should return a service error and log when invoice listing fails", async () => {
+      const errorSpy = jest.spyOn(logger, "error");
+      mockInvoiceRepository.find.mockRejectedValue(new Error("Query timeout"));
+      mockInvoiceRepository.count.mockResolvedValue(0);
 
-      it("should record a null actor when the admin is unknown", async () => {
+      await expect(
+        invoiceService.getInvoicesBySellerId({ sellerId: "seller-456" }),
+      ).rejects.toMatchObject({ code: "invoice_list_failed", statusCode: 500 });
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        "Failed to fetch invoices by seller",
+        expect.objectContaining({ sellerId: "seller-456" }),
+      );
+      errorSpy.mockRestore();
+    });
+
+    it("should propagate database errors on createInvoice", async () => {
+      mockInvoiceRepository.findOneBy.mockResolvedValue(null);
+      mockInvoiceRepository.create.mockReturnValue(mockInvoice);
+      mockInvoiceRepository.save.mockRejectedValue(new Error("Connection refused"));
+    });
+
+    it("should record a null actor when the admin is unknown", async () => {
         mockInvoiceRepository.findOne.mockResolvedValue(mockInvoice);
 
         await service.rejectInvoice({ invoiceId: "invoice-123", rejectionReason: "No PO" });

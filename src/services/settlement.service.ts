@@ -31,6 +31,7 @@ import {
 } from "../lib/settlement-events";
 import type { PaymentDistributorContractService } from "./stellar/payment-distributor-contract.service";
 import type { NotificationService } from "./notification.service";
+import type { IssuerReputationService } from "./issuer-reputation.service";
 
 // settlement.service.ts stores/computes amounts as decimal strings scaled by
 // 10^4 (see decimal-bigint.ts), while stroopsToXlm expects a stroops count
@@ -78,7 +79,8 @@ export class SettlementService {
     private readonly distributorConfig?: PaymentDistributorSettlementConfig,
     private readonly stateMachine: InvoiceStateMachine = createInvoiceStateMachine(),
     private readonly eventEmitter: SettlementEventEmitter = settlementEventEmitter,
-    private readonly notificationService?: NotificationService
+    private readonly notificationService?: NotificationService,
+    private readonly issuerReputationService?: IssuerReputationService
   ) {}
 
   /**
@@ -420,6 +422,39 @@ export class SettlementService {
       // Emit settlement event for downstream processing
       this.eventEmitter.emitSettlement(settlementEvent);
 
+      // Update issuer reputation after settlement
+      if (this.issuerReputationService && result.sellerId) {
+        try {
+          const user = await this.dataSource.getRepository(User).findOne({ where: { id: result.sellerId } });
+          if (user?.stellarAddress) {
+            const invoice = await this.dataSource.getRepository(Invoice).findOne({ where: { id: result.invoiceId } });
+            if (invoice) {
+              const dueDate = new Date(invoice.dueDate);
+              const settledDate = new Date();
+              const wasOnTime = settledDate <= dueDate;
+
+              await this.issuerReputationService.updateReputationOnSettlement(
+                user.stellarAddress,
+                result.invoiceId,
+                wasOnTime
+              );
+
+              logger.info("settlement.reputation_updated", {
+                invoiceId: result.invoiceId,
+                wallet: user.stellarAddress,
+                wasOnTime,
+              });
+            }
+          }
+        } catch (reputationError) {
+          logger.error("settlement.reputation_update_failed", {
+            invoiceId: result.invoiceId,
+            error: reputationError instanceof Error ? reputationError.message : String(reputationError),
+          });
+          // Don't fail settlement if reputation update fails
+        }
+      }
+
       // Dispatch settlement notifications to all holders
       if (this.notificationService) {
         try {
@@ -477,7 +512,8 @@ export function createSettlementService(
   distributorConfig?: PaymentDistributorSettlementConfig,
   stateMachine?: InvoiceStateMachine,
   eventEmitter?: SettlementEventEmitter,
-  notificationService?: NotificationService
+  notificationService?: NotificationService,
+  issuerReputationService?: IssuerReputationService
 ): SettlementService {
   return new SettlementService(
     dataSource,
@@ -485,6 +521,7 @@ export function createSettlementService(
     distributorConfig,
     stateMachine,
     eventEmitter,
-    notificationService
+    notificationService,
+    issuerReputationService
   );
 }
