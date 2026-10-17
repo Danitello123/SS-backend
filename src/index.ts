@@ -177,7 +177,7 @@ export async function bootstrap(): Promise<{
     : undefined;
 
   // ---- Feature: Secondary Market ----
-  const secondaryMarketService = createSecondaryMarketService(dataSource);
+  const secondaryMarketService = createSecondaryMarketService(dataSource, notificationService);
 
   // ---- Feature: Watchlist ----
   const watchlistService = createWatchlistService(dataSource);
