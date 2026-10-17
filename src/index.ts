@@ -137,7 +137,7 @@ export async function bootstrap(): Promise<{
       : undefined;
 
   const marketplaceService = createMarketplaceService(dataSource);
-  const kycService = new KycService(dataSource, config.kyc.webhookSecret ?? "", logger);
+  const kycService = new KycService(dataSource, config.kyc.webhookSecret ?? "", logger, notificationService);
 
   // Keep process.env.TERMS_VERSION aligned with resolved config for services
   // that read the env directly (acknowledgement gate in InvestmentService).
