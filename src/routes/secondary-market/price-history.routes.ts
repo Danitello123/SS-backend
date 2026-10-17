@@ -26,7 +26,7 @@ export function createPriceHistoryRouter({
     auth,
     async (req: InvoicePriceHistoryRequest, res: Response, next: NextFunction) => {
       try {
-        const { invoiceId } = req.params;
+        const invoiceId = String(req.params.invoiceId);
         const range = (req.query.range as PriceRange) || "30d";
 
         if (!["7d", "30d", "all"].includes(range)) {

@@ -355,7 +355,7 @@ export function requireSeller() {
   };
 }
 
-export function requireAdmin(adminWallets: string[]) {
+export function requireAdmin(adminWallets: string[] = []) {
   return (req: Request, _res: Response, next: NextFunction): void => {
     const user = (req as AuthenticatedRequest).user;
     if (!user) {
@@ -363,12 +363,15 @@ export function requireAdmin(adminWallets: string[]) {
       return;
     }
 
-    if (!adminWallets.includes(user.stellarAddress)) {
-      next(new AppError(403, "Admin privileges required", "ADMIN_REQUIRED"));
+    if (
+      user.userType === UserType.ADMIN ||
+      (adminWallets.length > 0 && adminWallets.includes(user.stellarAddress))
+    ) {
+      next();
       return;
     }
 
-    next();
+    next(new AppError(403, "Admin privileges required", "ADMIN_REQUIRED"));
   };
 }
 

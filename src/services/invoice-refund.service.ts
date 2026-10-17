@@ -81,7 +81,7 @@ export class InvoiceRefundService {
     }
   }
 
-  async getRefundableInvoices(walletAddress: string): Promise<Invoice[]> {
+  async getRefundableInvoices(_walletAddress: string): Promise<Invoice[]> {
     const now = new Date();
 
     // Scope to invoices this wallet actually invested in - without this

@@ -33,7 +33,7 @@ export function createAccreditationRouter({
     auth,
     async (req: WalletParamsRequest, res: Response, next: NextFunction) => {
       try {
-        const { wallet } = req.params;
+        const wallet = String(req.params.wallet);
         const accreditation = await accreditationService.getAccreditation(wallet);
 
         res.json({
@@ -54,7 +54,7 @@ export function createAccreditationRouter({
     requireAdmin(adminWallets),
     async (req: WalletParamsRequest, res: Response, next: NextFunction) => {
       try {
-        const { wallet } = req.params;
+        const wallet = String(req.params.wallet);
         const { tier, verificationSource } = req.body;
 
         if (!Object.values(AccreditationTier).includes(tier)) {
@@ -84,7 +84,8 @@ export function createAccreditationRouter({
     auth,
     async (req: WalletEligibilityParamsRequest, res: Response, next: NextFunction) => {
       try {
-        const { wallet, invoiceId } = req.params;
+        const wallet = String(req.params.wallet);
+        const invoiceId = String(req.params.invoiceId);
         const eligibility = await accreditationService.checkEligibility(
           wallet,
           invoiceId
