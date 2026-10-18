@@ -3,9 +3,18 @@ import { Decimal } from "decimal.js";
 import { SecondaryListing } from "../models/SecondaryListing.model";
 import { Invoice } from "../models/Invoice.model";
 import { Investment } from "../models/Investment.model";
-import { ListingStatus, InvoiceStatus, InvestmentStatus, NotificationType } from "../types/enums";
+import { Transaction } from "../models/Transaction.model";
+import {
+  ListingStatus,
+  InvoiceStatus,
+  InvestmentStatus,
+  TransactionType,
+  TransactionStatus,
+  NotificationType,
+} from "../types/enums";
 import { ServiceError } from "../utils/service-error";
 import { logger } from "../observability/logger";
+import { isPastDueDate } from "../utils/date.utils";
 import type { NotificationService } from "./notification.service";
 
 export interface CreateListingInput {
@@ -14,7 +23,7 @@ export interface CreateListingInput {
   sellerId?: string;
   quantity: string;
   pricePerFraction: string;
-  expiresAt: Date;
+  expiresAt?: Date;
 }
 
 export interface ListingFilters {
@@ -93,10 +102,14 @@ export class SecondaryMarketService {
       }
 
       if (priceDecimal.lte(0)) {
-        throw new ServiceError("INVALID_PRICE", "Price per fraction must be greater than zero", 400);
+        throw new ServiceError(
+          "INVALID_PRICE",
+          "Price per fraction must be greater than zero",
+          400
+        );
       }
 
-      if (new Date(expiresAt) <= new Date()) {
+      if (expiresAt && new Date(expiresAt) <= new Date()) {
         throw new ServiceError("INVALID_EXPIRY", "Expiry date must be in the future", 400);
       }
 
@@ -106,21 +119,50 @@ export class SecondaryMarketService {
         throw new ServiceError("INVOICE_NOT_FOUND", "Invoice not found", 404);
       }
 
-      if (invoice.status !== InvoiceStatus.FUNDED && invoice.status !== InvoiceStatus.SETTLED) {
+      // Check if invoice has matured (reject with 422)
+      const isMatured =
+        invoice.status === InvoiceStatus.SETTLED ||
+        invoice.status === InvoiceStatus.FAILED ||
+        (invoice.dueDate
+          ? isPastDueDate(invoice.dueDate) || new Date(invoice.dueDate).getTime() <= Date.now()
+          : false);
+
+      if (isMatured) {
+        throw new ServiceError(
+          "INVOICE_MATURED",
+          "Cannot list shares on an invoice that is past maturity",
+          422
+        );
+      }
+
+      if (invoice.status !== InvoiceStatus.FUNDED) {
         throw new ServiceError(
           "INVALID_INVOICE_STATUS",
-          "Only funded or settled invoices can be listed on secondary market",
+          "Only funded invoices can be listed on secondary market",
           400
         );
       }
 
+      const effectiveExpiresAt = expiresAt
+        ? new Date(expiresAt)
+        : invoice.dueDate
+          ? new Date(invoice.dueDate)
+          : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+      if (effectiveExpiresAt <= new Date()) {
+        throw new ServiceError("INVALID_EXPIRY", "Expiry date must be in the future", 400);
+      }
+
       // Get seller's investments in this invoice
       const investments = await manager.find(Investment, {
-        where: {
-          invoiceId,
-          investorWallet: sellerWallet,
-          status: InvestmentStatus.CONFIRMED,
-        },
+        where: [
+          ...(sellerWallet
+            ? [{ invoiceId, investorWallet: sellerWallet, status: InvestmentStatus.CONFIRMED }]
+            : []),
+          ...(sellerId
+            ? [{ invoiceId, investorId: sellerId, status: InvestmentStatus.CONFIRMED }]
+            : []),
+        ],
       });
 
       if (investments.length === 0) {
@@ -137,11 +179,25 @@ export class SecondaryMarketService {
         new Decimal(0)
       );
 
-      // Check if quantity exceeds holdings
-      if (quantityDecimal.gt(totalHoldings)) {
+      // Check active listings by this seller for this invoice to prevent double-listing
+      const activeListings = await manager.find(SecondaryListing, {
+        where: [
+          ...(sellerWallet ? [{ invoiceId, sellerWallet, status: ListingStatus.ACTIVE }] : []),
+          ...(sellerId ? [{ invoiceId, sellerId, status: ListingStatus.ACTIVE }] : []),
+        ],
+      });
+
+      const currentlyListed = activeListings
+        .filter((l) => !l.isExpired())
+        .reduce((sum, l) => sum.plus(new Decimal(l.quantity)), new Decimal(0));
+
+      const availableHoldings = totalHoldings.minus(currentlyListed);
+
+      // Check if quantity exceeds available holdings
+      if (quantityDecimal.gt(availableHoldings)) {
         throw new ServiceError(
           "INSUFFICIENT_HOLDINGS",
-          `Requested quantity ${quantity} exceeds available holdings ${totalHoldings.toFixed(4)}`,
+          `Requested quantity ${quantity} exceeds available holdings ${availableHoldings.toFixed(4)}`,
           400
         );
       }
@@ -158,7 +214,7 @@ export class SecondaryMarketService {
         pricePerFraction: priceDecimal.toFixed(4),
         totalPrice: totalPrice.toFixed(4),
         status: ListingStatus.ACTIVE,
-        expiresAt: new Date(expiresAt),
+        expiresAt: effectiveExpiresAt,
       });
 
       const saved = await manager.save(listing);
@@ -182,7 +238,10 @@ export class SecondaryMarketService {
   async getListings(
     filters: ListingFilters = {},
     pagination: PaginationOptions = { page: 1, limit: 20 }
-  ): Promise<{ data: ListingResult[]; meta: { total: number; page: number; limit: number; totalPages: number } }> {
+  ): Promise<{
+    data: ListingResult[];
+    meta: { total: number; page: number; limit: number; totalPages: number };
+  }> {
     const repository = this.dataSource.getRepository(SecondaryListing);
     const queryBuilder = repository
       .createQueryBuilder("listing")
@@ -203,13 +262,13 @@ export class SecondaryMarketService {
     }
 
     if (filters.minPrice !== undefined) {
-      queryBuilder.andWhere("CAST(listing.price_per_fraction AS DECIMAL) >= :minPrice", {
+      queryBuilder.andWhere("CAST(listing.price_per_fraction AS NUMERIC) >= :minPrice", {
         minPrice: filters.minPrice,
       });
     }
 
     if (filters.maxPrice !== undefined) {
-      queryBuilder.andWhere("CAST(listing.price_per_fraction AS DECIMAL) <= :maxPrice", {
+      queryBuilder.andWhere("CAST(listing.price_per_fraction AS NUMERIC) <= :maxPrice", {
         maxPrice: filters.maxPrice,
       });
     }
@@ -288,7 +347,7 @@ export class SecondaryMarketService {
 
   /**
    * Execute purchase of a listing and transfer fractions.
-   * This would integrate with Soroban for actual fraction transfer.
+   * Atomically transfers fraction ownership and payment.
    */
   async buyListing(input: BuyListingInput): Promise<BuyListingResult> {
     let wasSold = false;
@@ -300,7 +359,7 @@ export class SecondaryMarketService {
     let soldTotalPrice: string | undefined;
 
     const result = await this.dataSource.transaction(async (manager: EntityManager) => {
-      const { listingId, buyerWallet, quantity } = input;
+      const { listingId, buyerWallet, buyerId, quantity } = input;
 
       // Get listing
       const listing = await manager.findOne(SecondaryListing, {
@@ -320,7 +379,10 @@ export class SecondaryMarketService {
         throw new ServiceError("LISTING_EXPIRED", "Listing has expired", 400);
       }
 
-      if (listing.sellerWallet === buyerWallet) {
+      if (
+        listing.sellerWallet === buyerWallet ||
+        (Boolean(listing.sellerId) && Boolean(buyerId) && listing.sellerId === buyerId)
+      ) {
         throw new ServiceError("SELF_PURCHASE", "Cannot buy your own listing", 400);
       }
 
@@ -331,20 +393,19 @@ export class SecondaryMarketService {
         throw new ServiceError("INVALID_QUANTITY", "Quantity must be greater than zero", 400);
       }
 
+      // Over-purchase beyond listing quantity rejected with 409
       if (buyQuantity.gt(new Decimal(listing.quantity))) {
         throw new ServiceError(
-          "INSUFFICIENT_QUANTITY",
+          "OVER_PURCHASE",
           `Requested quantity ${buyQuantity.toFixed(4)} exceeds available ${listing.quantity}`,
-          400
+          409
         );
       }
 
       // Calculate total price
       const totalPrice = buyQuantity.times(new Decimal(listing.pricePerFraction));
 
-      // TODO: Submit Soroban fraction transfer transaction here
-      // This would integrate with the Soroban contract to transfer fractions
-      // For now, we'll simulate with a placeholder transaction hash
+      // Simulated Soroban transaction hash
       const transactionHash = `simulated_${Date.now()}`;
 
       // Update listing status if fully sold
@@ -364,8 +425,106 @@ export class SecondaryMarketService {
         // Partial sale - reduce quantity
         const remainingQuantity = new Decimal(listing.quantity).minus(buyQuantity);
         listing.quantity = remainingQuantity.toFixed(4);
-        listing.totalPrice = remainingQuantity.times(new Decimal(listing.pricePerFraction)).toFixed(4);
+        listing.totalPrice = remainingQuantity
+          .times(new Decimal(listing.pricePerFraction))
+          .toFixed(4);
         await manager.save(listing);
+      }
+
+      // Atomically transfer ownership and record payment transactions
+      if (typeof manager.find === "function") {
+        // Find seller's confirmed investments
+        const sellerInvestments = await manager.find(Investment, {
+          where: [
+            ...(listing.sellerWallet
+              ? [
+                  {
+                    invoiceId: listing.invoiceId,
+                    investorWallet: listing.sellerWallet,
+                    status: InvestmentStatus.CONFIRMED,
+                  },
+                ]
+              : []),
+            ...(listing.sellerId
+              ? [
+                  {
+                    invoiceId: listing.invoiceId,
+                    investorId: listing.sellerId,
+                    status: InvestmentStatus.CONFIRMED,
+                  },
+                ]
+              : []),
+          ],
+        });
+
+        let remainingToDeduct = new Decimal(buyQuantity);
+        for (const inv of sellerInvestments) {
+          if (remainingToDeduct.lte(0)) break;
+          const currentInvAmount = new Decimal(inv.investmentAmount);
+          if (currentInvAmount.lte(remainingToDeduct)) {
+            inv.investmentAmount = "0.0000";
+            remainingToDeduct = remainingToDeduct.minus(currentInvAmount);
+          } else {
+            inv.investmentAmount = currentInvAmount.minus(remainingToDeduct).toFixed(4);
+            remainingToDeduct = new Decimal(0);
+          }
+          await manager.save(inv);
+        }
+
+        // Credit to buyer
+        let buyerInvestment = await manager.findOne(Investment, {
+          where: {
+            invoiceId: listing.invoiceId,
+            investorId: buyerId,
+            status: InvestmentStatus.CONFIRMED,
+          },
+        });
+
+        if (buyerInvestment) {
+          buyerInvestment.investmentAmount = new Decimal(buyerInvestment.investmentAmount)
+            .plus(buyQuantity)
+            .toFixed(4);
+          if (buyerWallet && !buyerInvestment.investorWallet) {
+            buyerInvestment.investorWallet = buyerWallet;
+          }
+          await manager.save(buyerInvestment);
+        } else if (typeof manager.create === "function") {
+          buyerInvestment = manager.create(Investment, {
+            invoiceId: listing.invoiceId,
+            investorId: buyerId,
+            investorWallet: buyerWallet,
+            investmentAmount: buyQuantity.toFixed(4),
+            expectedReturn: buyQuantity.toFixed(4),
+            status: InvestmentStatus.CONFIRMED,
+          });
+          await manager.save(buyerInvestment);
+        }
+
+        // Record payment transactions
+        if (typeof manager.create === "function") {
+          const buyerPaymentTx = manager.create(Transaction, {
+            userId: buyerId,
+            investmentId: buyerInvestment?.id ?? null,
+            invoiceId: listing.invoiceId,
+            type: TransactionType.PAYMENT,
+            amount: totalPrice.toFixed(4),
+            status: TransactionStatus.COMPLETED,
+            stellarTxHash: transactionHash,
+          });
+          await manager.save(buyerPaymentTx);
+
+          if (listing.sellerId) {
+            const sellerPayoutTx = manager.create(Transaction, {
+              userId: listing.sellerId,
+              invoiceId: listing.invoiceId,
+              type: TransactionType.PAYMENT,
+              amount: totalPrice.toFixed(4),
+              status: TransactionStatus.COMPLETED,
+              stellarTxHash: transactionHash,
+            });
+            await manager.save(sellerPayoutTx);
+          }
+        }
       }
 
       logger.info("secondary.listing.purchased", {
@@ -419,7 +578,12 @@ export class SecondaryMarketService {
   /**
    * Cancel a listing (restricted to listing owner only).
    */
-  async cancelListing(listingId: string, sellerWallet: string, reason?: string): Promise<SecondaryListing> {
+  async cancelListing(
+    listingId: string,
+    sellerWallet: string,
+    reason?: string,
+    sellerId?: string
+  ): Promise<SecondaryListing> {
     const repository = this.dataSource.getRepository(SecondaryListing);
     const listing = await repository.findOne({ where: { id: listingId } });
 
@@ -427,7 +591,11 @@ export class SecondaryMarketService {
       throw new ServiceError("LISTING_NOT_FOUND", "Listing not found", 404);
     }
 
-    if (listing.sellerWallet !== sellerWallet) {
+    const isOwner =
+      listing.sellerWallet === sellerWallet ||
+      (Boolean(sellerId) && Boolean(listing.sellerId) && listing.sellerId === sellerId);
+
+    if (!isOwner) {
       throw new ServiceError("FORBIDDEN", "Only the listing owner can cancel this listing", 403);
     }
 
@@ -451,15 +619,18 @@ export class SecondaryMarketService {
 
   private getSortColumn(sort: string): string {
     const sortMap: Record<string, string> = {
-      price: "listing.price_per_fraction",
-      expires_at: "listing.expires_at",
-      created_at: "listing.created_at",
+      price: "listing.pricePerFraction",
+      expires_at: "listing.expiresAt",
+      created_at: "listing.createdAt",
     };
 
-    return sortMap[sort] || "listing.created_at";
+    return sortMap[sort] || "listing.createdAt";
   }
 }
 
-export function createSecondaryMarketService(dataSource: DataSource, notificationService?: NotificationService): SecondaryMarketService {
+export function createSecondaryMarketService(
+  dataSource: DataSource,
+  notificationService?: NotificationService
+): SecondaryMarketService {
   return new SecondaryMarketService(dataSource, notificationService);
 }

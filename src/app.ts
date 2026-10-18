@@ -502,10 +502,13 @@ export function createApp({
   }
 
   if (secondaryMarketService && authService) {
-    app.use(
-      "/api/v1/secondary",
-      createSecondaryMarketRouter({ secondaryMarketService, authService })
-    );
+    const secondaryMarketRouter = createSecondaryMarketRouter({
+      secondaryMarketService,
+      authService,
+    });
+    app.use("/api/v1/secondary-market", secondaryMarketRouter);
+    app.use("/secondary-market", secondaryMarketRouter);
+    app.use("/api/v1/secondary", secondaryMarketRouter);
   }
 
   if (watchlistService && authService) {
@@ -588,7 +591,7 @@ export function createApp({
         adminSettlementService,
         adminWallets: config.admin?.wallets || [],
         invoiceEscrowContractService,
-        feeScheduleService
+        feeScheduleService,
       })
     );
   }
