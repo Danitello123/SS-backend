@@ -37,8 +37,11 @@ export const MAX_BEARER_TOKEN_LENGTH = 4_096;
  */
 export const DEFAULT_AUTH_LOOKUP_TIMEOUT_MS = 5_000;
 
-/** Tokens are signed by AuthService with the default HMAC algorithm. */
-const ALLOWED_JWT_ALGORITHMS: jwt.Algorithm[] = ["HS256", "RS256", "ES256"];
+/**
+ * Tokens are verified against the symmetric JWT_SECRET, so only HMAC is
+ * accepted. Allowing RS256/ES256 here would open algorithm confusion attacks.
+ */
+export const ALLOWED_JWT_ALGORITHMS: jwt.Algorithm[] = ["HS256"];
 
 const JWT_SHAPE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$/;
 

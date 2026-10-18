@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from "crypto";
 import jwt from "jsonwebtoken";
 
 import {
@@ -168,6 +169,19 @@ describe("authenticateJWT", () => {
 
   it("rejects tokens signed with an algorithm other than HS256", async () => {
     const token = jwt.sign({}, SECRET, { subject: WALLET, algorithm: "HS512" });
+    const next = jest.fn();
+
+    await authenticateJWT(createRequest(`Bearer ${token}`), {} as never, next);
+
+    expect(forwardedError(next)).toMatchObject({ statusCode: 401 });
+  });
+
+  it.each([
+    ["RS256", "rsa", {}],
+    ["ES256", "ec", { namedCurve: "P-256" }],
+  ] as const)("rejects tokens signed with %s", async (algorithm, type, opts) => {
+    const { privateKey } = generateKeyPairSync(type as "rsa", { modulusLength: 2048, ...opts });
+    const token = jwt.sign({}, privateKey, { subject: WALLET, algorithm });
     const next = jest.fn();
 
     await authenticateJWT(createRequest(`Bearer ${token}`), {} as never, next);
