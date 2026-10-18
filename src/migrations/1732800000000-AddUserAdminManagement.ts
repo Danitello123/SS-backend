@@ -7,6 +7,9 @@ import { MigrationInterface, QueryRunner } from "typeorm";
 export class AddUserAdminManagement1732800000000 implements MigrationInterface {
   name = "AddUserAdminManagement1732800000000";
 
+  /** Postgres rejects ALTER TYPE ... ADD VALUE inside a transaction (SQLSTATE 25001). */
+  transaction = false as const;
+
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(
       `ALTER TYPE "public"."users_usertype_enum" ADD VALUE IF NOT EXISTS 'admin';`
