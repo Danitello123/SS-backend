@@ -3,6 +3,7 @@ import { SecondaryMarketService } from "../src/services/secondary-market.service
 import { Invoice } from "../src/models/Invoice.model";
 import { Investment } from "../src/models/Investment.model";
 import { SecondaryListing } from "../src/models/SecondaryListing.model";
+import { SettlementIntent } from "../src/models/SettlementIntent.model";
 import { InvestmentStatus, InvoiceStatus, ListingStatus } from "../src/types/enums";
 
 describe("SecondaryMarketService", () => {
@@ -24,7 +25,9 @@ describe("SecondaryMarketService", () => {
 
   beforeEach(() => {
     manager = {
-      findOne: jest.fn().mockResolvedValue(invoice),
+      findOne: jest.fn((entity: typeof Invoice | typeof SettlementIntent) =>
+        Promise.resolve(entity === Invoice ? invoice : null)
+      ),
       find: jest.fn((entity: typeof Investment | typeof SecondaryListing) =>
         Promise.resolve(entity === Investment ? investments : [existingListing])
       ),
@@ -86,6 +89,19 @@ describe("SecondaryMarketService", () => {
     });
     expect(manager.save).not.toHaveBeenCalled();
   });
+
+  it("blocks creating listings while a settlement payout is pending", async () => {
+    manager.findOne.mockImplementation((entity: typeof Invoice | typeof SettlementIntent) =>
+      Promise.resolve(entity === Invoice ? invoice : { id: "intent-1" })
+    );
+
+    await expect(service.createListing(listingInput)).rejects.toMatchObject({
+      code: "SETTLEMENT_IN_PROGRESS",
+      statusCode: 409,
+    });
+    expect(manager.find).not.toHaveBeenCalled();
+    expect(manager.save).not.toHaveBeenCalled();
+  });
 });
 
 describe("SecondaryMarketService.buyListing", () => {
@@ -122,8 +138,11 @@ describe("SecondaryMarketService.buyListing", () => {
       status: InvestmentStatus.CONFIRMED,
     } as Investment;
     manager = {
-      findOne: jest.fn((entity: typeof SecondaryListing | typeof Invoice) =>
-        Promise.resolve(entity === SecondaryListing ? listing : invoice)
+      findOne: jest.fn(
+        (entity: typeof SecondaryListing | typeof Invoice | typeof SettlementIntent) =>
+          Promise.resolve(
+            entity === SecondaryListing ? listing : entity === Invoice ? invoice : null
+          )
       ),
       find: jest.fn().mockResolvedValue([sellerInvestment]),
       create: jest.fn((_entity, values) => values),
@@ -193,12 +212,15 @@ describe("SecondaryMarketService.buyListing", () => {
   });
 
   it("rejects purchases after the invoice is settled", async () => {
-    manager.findOne.mockImplementation((entity: typeof SecondaryListing | typeof Invoice) =>
-      Promise.resolve(
-        entity === SecondaryListing
-          ? listing
-          : { ...invoice, status: InvoiceStatus.SETTLED }
-      )
+    manager.findOne.mockImplementation(
+      (entity: typeof SecondaryListing | typeof Invoice | typeof SettlementIntent) =>
+        Promise.resolve(
+          entity === SecondaryListing
+            ? listing
+            : entity === Invoice
+              ? { ...invoice, status: InvoiceStatus.SETTLED }
+              : null
+        )
     );
 
     await expect(
@@ -212,6 +234,32 @@ describe("SecondaryMarketService.buyListing", () => {
       statusCode: 400,
     });
 
+    expect(manager.save).not.toHaveBeenCalled();
+  });
+
+  it("blocks purchases while a settlement payout is pending", async () => {
+    manager.findOne.mockImplementation(
+      (entity: typeof SecondaryListing | typeof Invoice | typeof SettlementIntent) =>
+        Promise.resolve(
+          entity === SettlementIntent
+            ? { id: "intent-1" }
+            : entity === SecondaryListing
+              ? listing
+              : invoice
+        )
+    );
+
+    await expect(
+      service.buyListing({
+        listingId: "listing-1",
+        buyerWallet: "buyer-wallet",
+        buyerId: "buyer-id",
+      })
+    ).rejects.toMatchObject({
+      code: "SETTLEMENT_IN_PROGRESS",
+      statusCode: 409,
+    });
+    expect(manager.find).not.toHaveBeenCalled();
     expect(manager.save).not.toHaveBeenCalled();
   });
 });
