@@ -67,7 +67,8 @@ function makeDataSource(rules: AutoInvestRule[], users: User[], executions: Auto
       }
       if (entity === User) {
         return {
-          findOneBy: async (options: { id: string }) => users.find((user) => user.id === options.id) ?? null,
+          findOneBy: async (options: { id: string }) =>
+            users.find((user) => user.id === options.id) ?? null,
         };
       }
       if (entity === AutoInvestExecution) {
@@ -92,7 +93,9 @@ describe("AutoInvestRuleEngineService", () => {
     const invoice = makeInvoice();
     const executions: AutoInvestExecution[] = [];
     const createInvestment = jest.fn().mockResolvedValue({ id: "investment-1" });
-    const balanceChecker: AccountBalanceChecker = { getBalance: jest.fn().mockResolvedValue(new Decimal(500)) };
+    const balanceChecker: AccountBalanceChecker = {
+      getBalance: jest.fn().mockResolvedValue(new Decimal(500)),
+    };
 
     const engine = new AutoInvestRuleEngineService({
       dataSource: makeDataSource([rule], [investor], executions),
@@ -107,6 +110,7 @@ describe("AutoInvestRuleEngineService", () => {
       invoiceId: invoice.id,
       investorId: rule.investorId,
       investmentAmount: "500.0000", // min(maxPerInvoice=500, netAmount=950)
+      investorWallet: investor.stellarAddress,
     });
     expect(executions).toHaveLength(1);
     expect(executions[0]).toMatchObject({
@@ -123,7 +127,9 @@ describe("AutoInvestRuleEngineService", () => {
     const rule = makeRule({ maxPerInvoice: "500.0000" });
     const invoice = makeInvoice({ netAmount: "200.0000" });
     const createInvestment = jest.fn().mockResolvedValue({ id: "investment-1" });
-    const balanceChecker: AccountBalanceChecker = { getBalance: jest.fn().mockResolvedValue(new Decimal(1000)) };
+    const balanceChecker: AccountBalanceChecker = {
+      getBalance: jest.fn().mockResolvedValue(new Decimal(1000)),
+    };
 
     const engine = new AutoInvestRuleEngineService({
       dataSource: makeDataSource([rule], [investor], []),
@@ -135,7 +141,7 @@ describe("AutoInvestRuleEngineService", () => {
     await engine.evaluateInvoice(invoice);
 
     expect(createInvestment).toHaveBeenCalledWith(
-      expect.objectContaining({ investmentAmount: "200.0000" }),
+      expect.objectContaining({ investmentAmount: "200.0000" })
     );
   });
 
@@ -144,7 +150,9 @@ describe("AutoInvestRuleEngineService", () => {
     const invoice = makeInvoice();
     const executions: AutoInvestExecution[] = [];
     const createInvestment = jest.fn();
-    const balanceChecker: AccountBalanceChecker = { getBalance: jest.fn().mockResolvedValue(new Decimal(50)) };
+    const balanceChecker: AccountBalanceChecker = {
+      getBalance: jest.fn().mockResolvedValue(new Decimal(50)),
+    };
 
     const engine = new AutoInvestRuleEngineService({
       dataSource: makeDataSource([rule], [investor], executions),
@@ -165,7 +173,9 @@ describe("AutoInvestRuleEngineService", () => {
     const invoice = makeInvoice();
     const executions: AutoInvestExecution[] = [];
     const createInvestment = jest.fn().mockRejectedValue(new Error("Invoice already fully funded"));
-    const balanceChecker: AccountBalanceChecker = { getBalance: jest.fn().mockResolvedValue(new Decimal(500)) };
+    const balanceChecker: AccountBalanceChecker = {
+      getBalance: jest.fn().mockResolvedValue(new Decimal(500)),
+    };
 
     const engine = new AutoInvestRuleEngineService({
       dataSource: makeDataSource([rule], [investor], executions),
@@ -186,24 +196,27 @@ describe("AutoInvestRuleEngineService", () => {
     ["yield below the rule's minimum", makeRule({ minYield: "10.00" })], // invoice discountRate is 5.00
     ["face value above the rule's cap", makeRule({ maxFaceValue: "500.0000" })], // invoice amount is 1000
     ["risk tier mismatch", makeRule({ riskTier: RiskTier.HIGH })], // invoice riskScore 20 -> LOW
-  ])("does not execute or record anything when the rule doesn't match (%s)", async (_label, rule) => {
-    const invoice = makeInvoice();
-    const executions: AutoInvestExecution[] = [];
-    const createInvestment = jest.fn();
-    const balanceChecker: AccountBalanceChecker = { getBalance: jest.fn() };
+  ])(
+    "does not execute or record anything when the rule doesn't match (%s)",
+    async (_label, rule) => {
+      const invoice = makeInvoice();
+      const executions: AutoInvestExecution[] = [];
+      const createInvestment = jest.fn();
+      const balanceChecker: AccountBalanceChecker = { getBalance: jest.fn() };
 
-    const engine = new AutoInvestRuleEngineService({
-      dataSource: makeDataSource([rule], [investor], executions),
-      investmentService: { createInvestment } as unknown as InvestmentService,
-      balanceChecker,
-      logger: NOOP_LOGGER,
-    });
+      const engine = new AutoInvestRuleEngineService({
+        dataSource: makeDataSource([rule], [investor], executions),
+        investmentService: { createInvestment } as unknown as InvestmentService,
+        balanceChecker,
+        logger: NOOP_LOGGER,
+      });
 
-    await engine.evaluateInvoice(invoice);
+      await engine.evaluateInvoice(invoice);
 
-    expect(createInvestment).not.toHaveBeenCalled();
-    expect(executions).toHaveLength(0);
-  });
+      expect(createInvestment).not.toHaveBeenCalled();
+      expect(executions).toHaveLength(0);
+    }
+  );
 
   it("executes every matching rule independently, across different investors", async () => {
     const ruleA = makeRule({ id: "rule-a", investorId: "investor-1", maxPerInvoice: "100.0000" });
@@ -215,7 +228,9 @@ describe("AutoInvestRuleEngineService", () => {
       .fn()
       .mockResolvedValueOnce({ id: "investment-a" })
       .mockResolvedValueOnce({ id: "investment-b" });
-    const balanceChecker: AccountBalanceChecker = { getBalance: jest.fn().mockResolvedValue(new Decimal(1000)) };
+    const balanceChecker: AccountBalanceChecker = {
+      getBalance: jest.fn().mockResolvedValue(new Decimal(1000)),
+    };
 
     const engine = new AutoInvestRuleEngineService({
       dataSource: makeDataSource([ruleA, ruleB], [investor, investorB], executions),
@@ -244,7 +259,9 @@ describe("AutoInvestRuleEngineService", () => {
       .fn()
       .mockRejectedValueOnce(new Error("capacity exceeded"))
       .mockResolvedValueOnce({ id: "investment-b" });
-    const balanceChecker: AccountBalanceChecker = { getBalance: jest.fn().mockResolvedValue(new Decimal(1000)) };
+    const balanceChecker: AccountBalanceChecker = {
+      getBalance: jest.fn().mockResolvedValue(new Decimal(1000)),
+    };
 
     const engine = new AutoInvestRuleEngineService({
       dataSource: makeDataSource([ruleA, ruleB], [investor, investorB], executions),
