@@ -64,9 +64,17 @@ export class AutoInvestRuleEngineService {
     const amount = Decimal.min(new Decimal(rule.maxPerInvoice), new Decimal(invoice.netAmount));
 
     try {
-      const investor = await this.dependencies.dataSource.getRepository(User).findOneBy({ id: rule.investorId });
+      const investor = await this.dependencies.dataSource
+        .getRepository(User)
+        .findOneBy({ id: rule.investorId });
       if (!investor) {
-        await this.recordExecution(rule, invoice, amount, AutoInvestExecutionStatus.FAILED, "Investor not found");
+        await this.recordExecution(
+          rule,
+          invoice,
+          amount,
+          AutoInvestExecutionStatus.FAILED,
+          "Investor not found"
+        );
         return;
       }
 
@@ -77,7 +85,7 @@ export class AutoInvestRuleEngineService {
           invoice,
           amount,
           AutoInvestExecutionStatus.SKIPPED_INSUFFICIENT_BALANCE,
-          `Wallet balance ${balance.toString()} is below the rule's minimum ${rule.minWalletBalance}`,
+          `Wallet balance ${balance.toString()} is below the rule's minimum ${rule.minWalletBalance}`
         );
         return;
       }
@@ -86,9 +94,19 @@ export class AutoInvestRuleEngineService {
         invoiceId: invoice.id,
         investorId: rule.investorId,
         investmentAmount: amount.toFixed(4),
+        // Investments are made from the investor's own wallet; createInvestment
+        // requires it to check accreditation and risk suitability.
+        investorWallet: investor.stellarAddress,
       });
 
-      await this.recordExecution(rule, invoice, amount, AutoInvestExecutionStatus.EXECUTED, null, investment.id);
+      await this.recordExecution(
+        rule,
+        invoice,
+        amount,
+        AutoInvestExecutionStatus.EXECUTED,
+        null,
+        investment.id
+      );
 
       this.dependencies.logger.info("AutoInvestExecuted", {
         rule_id: rule.id,
@@ -116,7 +134,7 @@ export class AutoInvestRuleEngineService {
     amount: Decimal,
     status: AutoInvestExecutionStatus,
     reason: string | null,
-    investmentId: string | null = null,
+    investmentId: string | null = null
   ): Promise<void> {
     const execution = this.dependencies.dataSource.getRepository(AutoInvestExecution).create({
       ruleId: rule.id,
@@ -132,7 +150,7 @@ export class AutoInvestRuleEngineService {
 }
 
 export function createAutoInvestRuleEngineService(
-  dependencies: AutoInvestRuleEngineDependencies,
+  dependencies: AutoInvestRuleEngineDependencies
 ): AutoInvestRuleEngineService {
   return new AutoInvestRuleEngineService(dependencies);
 }

@@ -37,10 +37,7 @@ export class InvoiceRefundService {
     return { canRefund: true };
   }
 
-  async refundInvestment(
-    invoiceId: string,
-    walletAddress: string
-  ): Promise<void> {
+  async refundInvestment(invoiceId: string, walletAddress: string): Promise<void> {
     const invoice = await this.invoiceRepo.findOne({ where: { id: invoiceId } });
 
     if (!invoice) {
@@ -81,7 +78,7 @@ export class InvoiceRefundService {
     }
   }
 
-  async getRefundableInvoices(_walletAddress: string): Promise<Invoice[]> {
+  async getRefundableInvoices(walletAddress: string): Promise<Invoice[]> {
     const now = new Date();
 
     // Scope to invoices this wallet actually invested in - without this

@@ -119,6 +119,16 @@ export class TtlCache {
     }
   }
 
+  /** Drops every in-process entry whose key starts with `prefix`. */
+  invalidatePrefix(prefix: string): void {
+    const namespaced = this.buildKey(prefix);
+    for (const key of this.memory.keys()) {
+      if (key.startsWith(namespaced)) {
+        this.memory.delete(key);
+      }
+    }
+  }
+
   /** Drops every entry held in-process (Redis entries expire via their TTL). */
   clear(): void {
     this.memory.clear();

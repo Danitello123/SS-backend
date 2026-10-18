@@ -65,7 +65,7 @@ function createFakeDataSource(invoices: Invoice[], investments: Investment[], us
       },
       getMany: async () =>
         invoices.filter(
-          (invoice) => invoice.sellerId === sellerId && (!since || invoice.createdAt >= since),
+          (invoice) => invoice.sellerId === sellerId && (!since || invoice.createdAt >= since)
         ),
     };
     return builder;
@@ -78,7 +78,8 @@ function createFakeDataSource(invoices: Invoice[], investments: Investment[], us
         invoiceIds = params.invoiceIds;
         return builder;
       },
-      getMany: async () => investments.filter((investment) => invoiceIds.includes(investment.invoiceId)),
+      getMany: async () =>
+        investments.filter((investment) => invoiceIds.includes(investment.invoiceId)),
     };
     return builder;
   }
@@ -121,7 +122,11 @@ describe("IssuerAnalyticsService", () => {
   it("sums investmentAmount across CONFIRMED and SETTLED investments only", async () => {
     const invoice = makeInvoice({ status: InvoiceStatus.FUNDED });
     const investments = [
-      makeInvestment({ id: "i1", status: InvestmentStatus.CONFIRMED, investmentAmount: "300.0000" }),
+      makeInvestment({
+        id: "i1",
+        status: InvestmentStatus.CONFIRMED,
+        investmentAmount: "300.0000",
+      }),
       makeInvestment({ id: "i2", status: InvestmentStatus.SETTLED, investmentAmount: "200.0000" }),
       makeInvestment({ id: "i3", status: InvestmentStatus.PENDING, investmentAmount: "999.0000" }),
     ];
@@ -207,7 +212,10 @@ describe("IssuerAnalyticsService", () => {
     invoice.status = InvoiceStatus.SETTLED;
 
     const second = await service.getAnalytics("issuer-1", "all");
-    expect(second).toBe(first); // same cached object, not recomputed
+    // The cache round trips through JSON, so identity is not preserved; what
+    // matters is that the second call is served from cache rather than
+    // recomputed against the mutated invoice.
+    expect(second).toStrictEqual(first);
   });
 
   it("invalidate() busts the cache for every range of that issuer", async () => {
