@@ -40,7 +40,7 @@ export interface IssuerAnalytics {
   generatedAt: string;
 }
 
-const CACHE_TTL_MS = 5 * 60 * 1000;
+const CACHE_TTL_SECONDS = 5 * 60;
 
 function cacheKey(issuerId: string, range: AnalyticsRange): string {
   return `${issuerId}:${range}`;
@@ -99,7 +99,11 @@ function daysBetween(from: Date, to: Date): number {
  *   column would remove the ambiguity; out of scope here.
  */
 export class IssuerAnalyticsService {
-  private readonly cache = new TtlCache<IssuerAnalytics>(CACHE_TTL_MS);
+  private readonly cache = new TtlCache({
+    ttlSeconds: CACHE_TTL_SECONDS,
+    namespace: "issuer-analytics",
+    enabled: true,
+  });
 
   constructor(private readonly dataSource: DataSource) {}
 
@@ -126,11 +130,11 @@ export class IssuerAnalyticsService {
     }
 
     const key = cacheKey(issuerId, range);
-    const cached = this.cache.get(key);
+    const cached = await this.cache.get<IssuerAnalytics>(key);
     if (cached) return cached;
 
     const value = await this.computeAnalytics(issuerId, range, now);
-    this.cache.set(key, value);
+    await this.cache.set(key, value);
     return value;
   }
 
