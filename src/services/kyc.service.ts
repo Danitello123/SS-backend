@@ -3,9 +3,10 @@ import { DataSource, In } from "typeorm";
 import { KYCVerification } from "../models/KYCVerification.model";
 import { KycHistory } from "../models/KycHistory.model";
 import { User } from "../models/User.model";
-import { KYCStatus, KYCVerificationType } from "../types/enums";
+import { KYCStatus, KYCVerificationType, NotificationType } from "../types/enums";
 import { HttpError } from "../utils/http-error";
 import { logger, type AppLogger } from "../observability/logger";
+import type { NotificationService } from "./notification.service";
 
 export interface KycProviderData {
   verificationType?: KYCVerificationType;
@@ -39,7 +40,8 @@ export class KycService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly webhookSecret: string,
-    private readonly appLogger: AppLogger = logger
+    private readonly appLogger: AppLogger = logger,
+    private readonly notificationService?: NotificationService
   ) {}
 
   async submitKycVerification(
@@ -185,6 +187,31 @@ export class KycService {
         reason: payload.reason ?? null,
       });
     });
+
+    try {
+      const notifType =
+        payload.status === KYCStatus.APPROVED
+          ? NotificationType.KYC_APPROVED
+          : NotificationType.KYC_REJECTED;
+      const title =
+        payload.status === KYCStatus.APPROVED ? "KYC Approved" : "KYC Status Updated";
+      const message =
+        payload.status === KYCStatus.APPROVED
+          ? "Your identity verification has been approved."
+          : `Your KYC status has changed to ${payload.status}.`;
+      await this.notificationService?.createNotification(
+        payload.userId,
+        notifType,
+        title,
+        message,
+        { status: payload.status, reason: payload.reason ?? null }
+      );
+    } catch (error) {
+      this.appLogger.warn("kyc.notification.failed", {
+        user_id: payload.userId,
+        error,
+      });
+    }
   }
 
   /**

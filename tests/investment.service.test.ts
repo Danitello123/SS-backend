@@ -125,6 +125,27 @@ describe("InvestmentService", () => {
     );
   });
 
+  it("should reject investment once the funding deadline has passed, even with a future due date", async () => {
+    const mockInvoice = {
+      ...getMockInvoice(),
+      dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      fundingDeadline: new Date(Date.now() - 1000),
+    } as Invoice;
+    mockQueryBuilder.getOne.mockResolvedValue(mockInvoice);
+    mockEntityManager.find.mockResolvedValue([]);
+
+    const input = {
+      invoiceId: "invoice-1",
+      investorId: "investor-1",
+      investmentAmount: "100.0000",
+      investorWallet: INVESTOR_WALLET,
+    };
+
+    await expect(investmentService.createInvestment(input)).rejects.toThrow(
+      new ServiceError("funding_deadline_passed", "Funding deadline has passed", 422)
+    );
+  });
+
   it("should prevent self-dealing", async () => {
     const mockInvoice = getMockInvoice();
     mockQueryBuilder.getOne.mockResolvedValue(mockInvoice);
