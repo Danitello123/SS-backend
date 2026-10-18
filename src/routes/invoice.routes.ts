@@ -301,7 +301,7 @@ export function createInvoiceRouter({
         req.body?.ipfsDocumentUrl !== undefined;
 
       if (isSubmission) {
-        return submitInvoice(req, res, invoiceService);
+        return submitInvoice(req, res, invoiceService, config);
       }
       next();
     },
@@ -313,7 +313,7 @@ export function createInvoiceRouter({
 
   // POST /api/v1/invoices/submit - Explicit submit alias
   router.post("/submit", authenticateJWT, (req: Request, res: Response) => {
-    return submitInvoice(req, res, invoiceService);
+    return submitInvoice(req, res, invoiceService, config);
   });
 
   // POST /api/v1/invoices/batch-publish - Publish several drafts atomically.
