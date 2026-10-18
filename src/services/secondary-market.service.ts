@@ -66,7 +66,6 @@ export interface BuyListingResult {
   buyerWallet: string;
   quantity: string;
   totalPrice: string;
-  transactionHash?: string;
 }
 
 export class SecondaryMarketService {
@@ -102,10 +101,10 @@ export class SecondaryMarketService {
         throw new ServiceError("INVOICE_NOT_FOUND", "Invoice not found", 404);
       }
 
-      if (invoice.status !== InvoiceStatus.FUNDED && invoice.status !== InvoiceStatus.SETTLED) {
+      if (invoice.status !== InvoiceStatus.FUNDED) {
         throw new ServiceError(
           "INVALID_INVOICE_STATUS",
-          "Only funded or settled invoices can be listed on secondary market",
+          "Only funded invoices can be listed on secondary market",
           400
         );
       }
@@ -297,17 +296,16 @@ export class SecondaryMarketService {
   }
 
   /**
-   * Execute purchase of a listing and transfer fractions.
-   * This would integrate with Soroban for actual fraction transfer.
+   * Transfer a listed holding between investors.
    */
   async buyListing(input: BuyListingInput): Promise<BuyListingResult> {
     return this.dataSource.transaction(async (manager: EntityManager) => {
-      const { listingId, buyerWallet, quantity } = input;
+      const { listingId, buyerWallet, buyerId, quantity } = input;
 
       // Get listing
       const listing = await manager.findOne(SecondaryListing, {
         where: { id: listingId },
-        relations: ["invoice"],
+        lock: { mode: "pessimistic_write" },
       });
 
       if (!listing) {
@@ -324,6 +322,21 @@ export class SecondaryMarketService {
 
       if (listing.sellerWallet === buyerWallet) {
         throw new ServiceError("SELF_PURCHASE", "Cannot buy your own listing", 400);
+      }
+
+      const invoice = await manager.findOne(Invoice, {
+        where: { id: listing.invoiceId },
+        lock: { mode: "pessimistic_write" },
+      });
+      if (!invoice) {
+        throw new ServiceError("INVOICE_NOT_FOUND", "Invoice not found", 404);
+      }
+      if (invoice.status !== InvoiceStatus.FUNDED) {
+        throw new ServiceError(
+          "INVALID_INVOICE_STATUS",
+          "Only funded invoices can be purchased on the secondary market",
+          400
+        );
       }
 
       // Determine quantity to buy (default to full listing quantity)
@@ -344,10 +357,80 @@ export class SecondaryMarketService {
       // Calculate total price
       const totalPrice = buyQuantity.times(new Decimal(listing.pricePerFraction));
 
-      // TODO: Submit Soroban fraction transfer transaction here
-      // This would integrate with the Soroban contract to transfer fractions
-      // For now, we'll simulate with a placeholder transaction hash
-      const transactionHash = `simulated_${Date.now()}`;
+      const sellerInvestments = await manager.find(Investment, {
+        where: {
+          invoiceId: listing.invoiceId,
+          investorWallet: listing.sellerWallet,
+          status: InvestmentStatus.CONFIRMED,
+        },
+        order: { id: "ASC" },
+        lock: { mode: "pessimistic_write" },
+      });
+      const sellerHoldings = sellerInvestments.reduce(
+        (sum, investment) => sum.plus(new Decimal(investment.investmentAmount)),
+        new Decimal(0)
+      );
+
+      if (buyQuantity.gt(sellerHoldings)) {
+        throw new ServiceError(
+          "INSUFFICIENT_HOLDINGS",
+          `Requested quantity ${buyQuantity.toFixed(4)} exceeds seller holdings ${sellerHoldings.toFixed(4)}`,
+          400
+        );
+      }
+
+      let remainingToTransfer = buyQuantity;
+      let buyerExpectedReturn = new Decimal(0);
+
+      for (const investment of sellerInvestments) {
+        if (remainingToTransfer.isZero()) {
+          break;
+        }
+
+        const sourceAmount = new Decimal(investment.investmentAmount);
+        const transferredAmount = remainingToTransfer.lt(sourceAmount)
+          ? remainingToTransfer
+          : sourceAmount;
+        const sourceExpectedReturn = new Decimal(investment.expectedReturn);
+        const transferredExpectedReturn = transferredAmount.equals(sourceAmount)
+          ? sourceExpectedReturn
+          : sourceExpectedReturn
+              .times(transferredAmount)
+              .dividedBy(sourceAmount)
+              .toDecimalPlaces(4);
+
+        investment.investmentAmount = sourceAmount.minus(transferredAmount).toFixed(4);
+        investment.expectedReturn = sourceExpectedReturn.minus(transferredExpectedReturn).toFixed(4);
+        if (new Decimal(investment.investmentAmount).isZero()) {
+          investment.status = InvestmentStatus.CANCELLED;
+        }
+        await manager.save(investment);
+
+        buyerExpectedReturn = buyerExpectedReturn.plus(transferredExpectedReturn);
+        remainingToTransfer = remainingToTransfer.minus(transferredAmount);
+      }
+
+      if (!remainingToTransfer.isZero()) {
+        throw new ServiceError(
+          "INSUFFICIENT_HOLDINGS",
+          "Seller holdings changed during purchase",
+          400
+        );
+      }
+
+      const buyerInvestment = manager.create(Investment, {
+        invoiceId: listing.invoiceId,
+        investorId: buyerId,
+        investorWallet: buyerWallet,
+        investmentAmount: buyQuantity.toFixed(4),
+        expectedReturn: buyerExpectedReturn.toFixed(4),
+        actualReturn: null,
+        status: InvestmentStatus.CONFIRMED,
+        fundingBlock: null,
+        transactionHash: null,
+        stellarOperationIndex: null,
+      });
+      await manager.save(buyerInvestment);
 
       // Update listing status if fully sold
       if (buyQuantity.equals(new Decimal(listing.quantity))) {
@@ -366,7 +449,6 @@ export class SecondaryMarketService {
         buyer_wallet: buyerWallet,
         quantity: buyQuantity.toFixed(4),
         total_price: totalPrice.toFixed(4),
-        transaction_hash: transactionHash,
       });
 
       return {
@@ -374,7 +456,6 @@ export class SecondaryMarketService {
         buyerWallet,
         quantity: buyQuantity.toFixed(4),
         totalPrice: totalPrice.toFixed(4),
-        transactionHash,
       };
     });
   }
