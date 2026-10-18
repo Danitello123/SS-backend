@@ -8,6 +8,9 @@ import { MigrationInterface, QueryRunner } from "typeorm";
 export class AddInvoiceLifecycleNotificationTypes1732500000000 implements MigrationInterface {
   name = "AddInvoiceLifecycleNotificationTypes1732500000000";
 
+  /** Postgres rejects ALTER TYPE ... ADD VALUE inside a transaction (SQLSTATE 25001). */
+  transaction = false as const;
+
   public async up(queryRunner: QueryRunner): Promise<void> {
     for (const value of [
       "invoice_rejected",
