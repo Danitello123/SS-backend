@@ -53,6 +53,7 @@ import { createCommunityProgramsRouter } from "./routes/community-programs.route
 import { createFxRouter } from "./routes/fx.routes";
 
 import type { AuthService } from "./services/auth.service";
+import type { WaitlistService } from "./services/waitlist.service";
 import type { NotificationService } from "./services/notification.service";
 import type { InvoiceService } from "./services/invoice.service";
 import type { InvestmentService } from "./services/investment.service";
@@ -222,6 +223,8 @@ export interface AppDependencies {
   metricsRegistry?: MetricsRegistry;
   readinessChecks?: ReadinessChecks;
   config?: import("./config/env").AppConfig;
+  /** Optional: enables waitlist management endpoints (issue #599) */
+  waitlistService?: WaitlistService;
 
   http?: {
     trustProxy?: boolean | number | string;
@@ -272,6 +275,7 @@ export function createApp({
   investorRiskProfileService,
   draftService,
   invoiceEscrowContractService,
+  waitlistService,
   logger: appLogger = logger,
   metricsEnabled = true,
   metricsRegistry = new MetricsRegistry(),
@@ -301,7 +305,9 @@ export function createApp({
 
   app.use(
     cors({
-      origin: http?.corsAllowedOrigins ?? true,
+      origin: http?.corsAllowedOrigins && http.corsAllowedOrigins.length > 0
+        ? http.corsAllowedOrigins
+        : false,
       credentials: http?.corsAllowCredentials ?? false,
     })
   );
@@ -594,7 +600,9 @@ export function createApp({
         adminSettlementService,
         adminWallets: config.admin?.wallets || [],
         invoiceEscrowContractService,
-        feeScheduleService
+        feeScheduleService,
+        waitlistService,
+        notificationService
       })
     );
   }
