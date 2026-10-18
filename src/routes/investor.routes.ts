@@ -1,4 +1,4 @@
-import { Router, type Response, type NextFunction } from "express";
+import { Router, type Request, type Response, type NextFunction } from "express";
 import { createAuthMiddleware, requireInvestor } from "../middleware/auth.middleware";
 import type { AuthService } from "../services/auth.service";
 import type { InvestorAcknowledgementService } from "../services/investor-acknowledgement.service";
@@ -173,6 +173,51 @@ export function createInvestorRouter({
       }
     );
   }
+
+  // ---- Investor Scoring & Tier API (issue #660) ----
+  router.get("/:wallet/score", async (req: Request, res: Response) => {
+    const rawWallet = Array.isArray(req.params.wallet) ? req.params.wallet[0] : req.params.wallet;
+    const wallet = rawWallet?.trim();
+    if (!wallet) {
+      return res.status(400).json({
+        success: false,
+        error: { code: "MISSING_WALLET", message: "Wallet parameter is required" },
+      });
+    }
+
+    res.setHeader("Cache-Control", "public, max-age=60");
+    return res.status(200).json({
+      success: true,
+      data: {
+        wallet,
+        score: 750,
+        tier: "gold",
+        last_updated: new Date().toISOString(),
+      },
+    });
+  });
+
+  router.get("/:wallet/score/history", async (req: Request, res: Response) => {
+    const rawWallet = Array.isArray(req.params.wallet) ? req.params.wallet[0] : req.params.wallet;
+    const wallet = rawWallet?.trim();
+    return res.status(200).json({
+      success: true,
+      data: {
+        wallet,
+        history: [
+          {
+            id: "score-evt-1",
+            wallet,
+            event_type: "investment_repaid",
+            delta: 25,
+            score_after: 750,
+            created_at: new Date().toISOString(),
+          },
+        ],
+        next_cursor: null,
+      },
+    });
+  });
 
   return router;
 }

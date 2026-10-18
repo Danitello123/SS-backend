@@ -50,6 +50,7 @@ import { createRoyaltiesRouter } from "./routes/royalties.routes";
 import { createSubscriptionsRouter } from "./routes/subscriptions.routes";
 import { createOnboardingRouter } from "./routes/onboarding.routes";
 import { createCommunityProgramsRouter } from "./routes/community-programs.routes";
+import { createFxRouter } from "./routes/fx.routes";
 
 import type { AuthService } from "./services/auth.service";
 import type { NotificationService } from "./services/notification.service";
@@ -512,6 +513,10 @@ export function createApp({
   if (watchlistService && authService) {
     app.use("/api/v1/watchlist", createWatchlistRouter({ watchlistService, authService }));
   }
+
+  // Issue #663 — FX rate indexer & currency conversion
+  app.use("/api/v1/fx", createFxRouter());
+  app.use("/fx", createFxRouter());
 
   // ---- Keys: Ratings Leaderboard, Buy Limits, Curve Migrations, Merge Proposals ----
   if (
