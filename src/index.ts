@@ -57,6 +57,7 @@ import { getRedisClient } from "./config/redis";
 import { createIssuerReputationService } from "./services/issuer-reputation.service";
 import { createInvestorRiskProfileService } from "./services/investor-risk-profile.service";
 import { createInvoiceDraftService } from "./services/invoice-draft.service";
+import { createWaitlistService } from "./services/waitlist.service";
 
 export async function bootstrap(): Promise<{
   server: Server;
@@ -209,6 +210,9 @@ export async function bootstrap(): Promise<{
   // ---- Feature: Fee Schedule Management (issue #592) ----
   const feeScheduleService = createFeeScheduleService(dataSource, getRedisClient());
 
+  // ---- Feature: Waitlist Management (issue #599) ----
+  const waitlistService = createWaitlistService(dataSource, logger);
+
   const app = createApp({
     authService,
     notificationService,
@@ -239,6 +243,7 @@ export async function bootstrap(): Promise<{
     issuerReputationService,
     investorRiskProfileService,
     draftService,
+    waitlistService,
     config,
     logger,
     metricsEnabled: config.observability.metricsEnabled,
