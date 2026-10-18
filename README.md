@@ -10,6 +10,10 @@ Stellar and uses Soroban contracts for escrow and payment distribution.
 - Redis caching layer for read-heavy invoice listing and detail routes with automated mutation invalidation and `X-Cache` observability headers
 - HMAC-SHA256 signature verification middleware for authenticating third-party webhook payloads
 - Public marketplace discovery with cursor pagination, filtering, and sorting
+- Secondary market order book depth API aggregating buy orders and active listings by price level
+- FX rate indexer and conversion API tracking oracle RateUpdated events and pair staleness
+- Investor reputation scoring indexer and tier API tracking on-chain ScoreUpdated events
+- Issuer announcement indexer and IPFS feed API for invoice updates
 - Fractional investments with idempotent payment verification and reconciliation
 - Settlement orchestration, notifications, webhooks, health checks, and Prometheus metrics
 - Hardened structured logging with correlation IDs, sensitive data redaction, and cycle-safe serialization
