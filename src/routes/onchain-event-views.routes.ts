@@ -1,6 +1,10 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { DataSource } from "typeorm";
 import { SorobanEventLog } from "../models/SorobanEventLog.model";
+import { isValidStellarPublicKey } from "../utils/stellar-address.utils";
+
+const MAX_LIMIT = 500;
+const DEFAULT_LIMIT = 100;
 
 /**
  * Minimal read views over already-indexed raw Soroban events for #672-#675.
@@ -19,13 +23,18 @@ export function createOnchainEventViewsRouter(dataSource: DataSource): Router {
   const events = () => dataSource.getRepository(SorobanEventLog);
   const forward = (next: NextFunction, error: unknown) => next(error);
 
-  const byPayloadField = (topics: string[], field: string, value: string) =>
+  // #2 (security review) — capped with .take() so a wallet/invoice/pool with
+  // a very large matching event history can't force an unbounded result set.
+  const byPayloadField = (topics: string[], field: string, value: string, limit: number) =>
     events()
       .createQueryBuilder("e")
       .where("e.topic IN (:...topics)", { topics })
       .andWhere(`e.payload ->> :field = :value`, { field, value })
       .orderBy("e.ledgerSequence", "ASC")
+      .take(Math.min(Math.max(1, limit || DEFAULT_LIMIT), MAX_LIMIT))
       .getMany();
+
+  const parseLimit = (req: Request) => Math.min(Number(req.query.limit) || DEFAULT_LIMIT, MAX_LIMIT);
 
   // #672 — syndicate events for one invoice.
   router.get("/invoices/:invoiceId/syndicate", async (req: Request, res: Response, next) => {
@@ -34,6 +43,7 @@ export function createOnchainEventViewsRouter(dataSource: DataSource): Router {
         ["syndicate_created", "syndicate_joined", "syndicate_member_exited", "syndicate_executed"],
         "invoice_id",
         req.params.invoiceId,
+        parseLimit(req),
       );
       res.json({ success: true, data });
     } catch (error) { forward(next, error); }
@@ -42,7 +52,7 @@ export function createOnchainEventViewsRouter(dataSource: DataSource): Router {
   // #673 — risk alert events for one invoice.
   router.get("/invoices/:invoiceId/risk-status", async (req: Request, res: Response, next) => {
     try {
-      const data = await byPayloadField(["invoice_at_risk"], "invoice_id", req.params.invoiceId);
+      const data = await byPayloadField(["invoice_at_risk"], "invoice_id", req.params.invoiceId, parseLimit(req));
       res.json({ success: true, data });
     } catch (error) { forward(next, error); }
   });
@@ -50,7 +60,11 @@ export function createOnchainEventViewsRouter(dataSource: DataSource): Router {
   // #674 — loyalty tier history for one wallet.
   router.get("/investors/:wallet/loyalty", async (req: Request, res: Response, next) => {
     try {
-      const data = await byPayloadField(["loyalty_tier_upgraded"], "wallet", req.params.wallet);
+      if (!isValidStellarPublicKey(req.params.wallet)) {
+        res.status(400).json({ success: false, error: "Invalid wallet address" });
+        return;
+      }
+      const data = await byPayloadField(["loyalty_tier_upgraded"], "wallet", req.params.wallet, parseLimit(req));
       res.json({ success: true, data, current: data.at(-1) ?? null });
     } catch (error) { forward(next, error); }
   });
@@ -58,7 +72,12 @@ export function createOnchainEventViewsRouter(dataSource: DataSource): Router {
   // #675 — pool creation/investment events for one pool.
   router.get("/pools/:poolId", async (req: Request, res: Response, next) => {
     try {
-      const data = await byPayloadField(["pool_created", "pool_investment_executed"], "pool_id", req.params.poolId);
+      const data = await byPayloadField(
+        ["pool_created", "pool_investment_executed"],
+        "pool_id",
+        req.params.poolId,
+        parseLimit(req),
+      );
       res.json({ success: true, data });
     } catch (error) { forward(next, error); }
   });
