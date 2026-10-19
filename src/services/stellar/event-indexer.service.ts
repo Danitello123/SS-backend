@@ -164,16 +164,9 @@ export class EventIndexerService {
         },
       ];
 
-      const requestParams = {
-        filters,
-        limit: options.limit ?? 100,
-        cursor: options.cursor ?? "now",
-      } as unknown as SorobanRpc.Server.GetEventsRequest;
-
-      if (startLedger > 1) {
-        // startLedger may be omitted from some RPC types; set it conditionally
-        (requestParams as any).startLedger = startLedger;
-      }
+      const requestParams: SorobanRpc.Server.GetEventsRequest = options.cursor
+        ? { filters, limit: options.limit ?? 100, cursor: options.cursor }
+        : { filters, limit: options.limit ?? 100, startLedger };
 
       const response = await this.rpcServer.getEvents(requestParams);
       const events = response.events || [];

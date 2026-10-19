@@ -451,7 +451,7 @@ export class InvoiceEscrowContractService {
     return {
       status: response.status,
       txHash: response.hash,
-      errorResult: (response as any).errorResult,
+      errorResult: response.errorResult,
     };
   }
 
@@ -651,7 +651,7 @@ export class InvoiceEscrowContractService {
         "on_chain_settlement_failed",
         "On-chain settlement transaction rejected",
         502,
-        { errorResult: (submitted as any).errorResult }
+        { errorResult: submitted.errorResult }
       );
     }
 
