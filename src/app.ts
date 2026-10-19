@@ -50,6 +50,7 @@ import { createRoyaltiesRouter } from "./routes/royalties.routes";
 import { createSubscriptionsRouter } from "./routes/subscriptions.routes";
 import { createOnboardingRouter } from "./routes/onboarding.routes";
 import { createCommunityProgramsRouter } from "./routes/community-programs.routes";
+import { createOnchainEventViewsRouter } from "./routes/onchain-event-views.routes";
 import { createFxRouter } from "./routes/fx.routes";
 
 import type { AuthService } from "./services/auth.service";
@@ -421,6 +422,9 @@ export function createApp({
   app.use("/api/v1/auth", createAuthRouter(authService, appLogger));
   app.use("/auth", createAuthRouter(authService, appLogger));
   app.use("/api/v1", createCommunityProgramsRouter(dataSource, authService));
+  // #672-#675 — minimal read views over already-indexed syndicate/risk/loyalty/pool events.
+  app.use("/api/v1", createOnchainEventViewsRouter(dataSource));
+  app.use("/", createOnchainEventViewsRouter(dataSource));
 
   if (kycService) {
     app.use("/api/v1/kyc", createKycRouter(kycService, authService));
