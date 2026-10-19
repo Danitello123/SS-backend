@@ -207,7 +207,11 @@ function validateOpenAPIDrift(): boolean {
       route === "/notifications" ||
       // Alias mounts of documented routers.
       route === "/keys" ||
-      route === "/swaps";
+      route === "/swaps" ||
+      route === "/investors" ||
+      route === "/portfolio" ||
+      route === "/marketplace" ||
+      route === "/seller";
 
     if (isDocumented) {
       logSuccess(`Registered route has spec: ${route}`);

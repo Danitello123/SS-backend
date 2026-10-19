@@ -246,6 +246,23 @@ describe("Invoice Model", () => {
       expect(Invoice.isOverdue(invoice)).toBe(false);
     });
 
+    it("does not mark a date-only due date as overdue at the start of its own day", () => {
+      // TypeORM returns a `date` column as a bare "YYYY-MM-DD" string at runtime.
+      const invoice = new Invoice();
+      invoice.dueDate = "2026-10-17" as unknown as Date;
+      const earlyMorningSameDay = new Date("2026-10-17T00:30:00.000Z");
+
+      expect(Invoice.isOverdue(invoice, earlyMorningSameDay)).toBe(false);
+    });
+
+    it("marks a date-only due date as overdue once its day has fully elapsed", () => {
+      const invoice = new Invoice();
+      invoice.dueDate = "2026-10-17" as unknown as Date;
+      const nextDay = new Date("2026-10-18T00:00:01.000Z");
+
+      expect(Invoice.isOverdue(invoice, nextDay)).toBe(true);
+    });
+
     it("computes funding runway in hours accurately", () => {
       const invoice = new Invoice();
       const reference = new Date("2026-01-01T00:00:00.000Z");

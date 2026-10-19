@@ -7,6 +7,9 @@ import { MigrationInterface, QueryRunner } from "typeorm";
 export class AddNotificationDispatchDedupe1732900000000 implements MigrationInterface {
   name = "AddNotificationDispatchDedupe1732900000000";
 
+  /** Postgres rejects ALTER TYPE ... ADD VALUE inside a transaction (SQLSTATE 25001). */
+  transaction = false as const;
+
   public async up(queryRunner: QueryRunner): Promise<void> {
     for (const value of ["invoice_approved", "invoice_deadline_extended", "invoice_matured"]) {
       await queryRunner.query(

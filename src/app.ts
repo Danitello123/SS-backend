@@ -44,12 +44,16 @@ import type { AtomicSwapService } from "./services/atomic-swap.service";
 import type { AclService } from "./services/acl.service";
 import type { CreatorKeyService } from "./services/creator-key.service";
 import type { CurveMigrationService } from "./services/curve-migration.service";
+import type { KeyMergeProposalService } from "./services/key-merge-proposal.service";
 import { createSwapRouter } from "./routes/swap.routes";
 import { createRoyaltiesRouter } from "./routes/royalties.routes";
 import { createSubscriptionsRouter } from "./routes/subscriptions.routes";
 import { createOnboardingRouter } from "./routes/onboarding.routes";
+import { createCommunityProgramsRouter } from "./routes/community-programs.routes";
+import { createFxRouter } from "./routes/fx.routes";
 
 import type { AuthService } from "./services/auth.service";
+import type { WaitlistService } from "./services/waitlist.service";
 import type { NotificationService } from "./services/notification.service";
 import type { InvoiceService } from "./services/invoice.service";
 import type { InvestmentService } from "./services/investment.service";
@@ -66,6 +70,10 @@ import type { PortfolioService } from "./services/portfolio.service";
 import type { SecondaryMarketService } from "./services/secondary-market.service";
 import type { WatchlistService } from "./services/watchlist.service";
 import type { SettlementWorker } from "./workers/settlement.worker";
+import type { FeeScheduleService } from "./services/fee-schedule.service";
+import type { IssuerReputationService } from "./services/issuer-reputation.service";
+import type { InvestorRiskProfileService } from "./services/investor-risk-profile.service";
+import type { InvoiceDraftService } from "./services/invoice-draft.service";
 
 import dataSource from "./config/database";
 import { getRedisClient } from "./config/redis";
@@ -93,7 +101,10 @@ async function checkDependency(
     await Promise.race([
       Promise.resolve().then(check),
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("Health check timed out")), READINESS_CHECK_TIMEOUT_MS);
+        timer = setTimeout(
+          () => reject(new Error("Health check timed out")),
+          READINESS_CHECK_TIMEOUT_MS
+        );
         timer.unref?.();
       }),
     ]);
@@ -194,6 +205,7 @@ export interface AppDependencies {
   aclService?: AclService;
   creatorKeyService?: CreatorKeyService;
   curveMigrationService?: CurveMigrationService;
+  keyMergeProposalService?: KeyMergeProposalService;
   secondaryMarketService?: SecondaryMarketService;
   watchlistService?: WatchlistService;
   settlementWorker?: SettlementWorker;
@@ -201,12 +213,18 @@ export interface AppDependencies {
   extensionService?: InvoiceExtensionService;
   portfolioService?: PortfolioService;
   adminMetricsService?: AdminMetricsService;
+  feeScheduleService?: FeeScheduleService;
+  issuerReputationService?: IssuerReputationService;
+  investorRiskProfileService?: InvestorRiskProfileService;
+  draftService?: InvoiceDraftService;
   invoiceEscrowContractService?: import("./services/stellar/invoice-escrow-contract.service").InvoiceEscrowContractService;
   logger?: AppLogger;
   metricsEnabled?: boolean;
   metricsRegistry?: MetricsRegistry;
   readinessChecks?: ReadinessChecks;
   config?: import("./config/env").AppConfig;
+  /** Optional: enables waitlist management endpoints (issue #599) */
+  waitlistService?: WaitlistService;
 
   http?: {
     trustProxy?: boolean | number | string;
@@ -244,6 +262,7 @@ export function createApp({
   aclService,
   creatorKeyService,
   curveMigrationService,
+  keyMergeProposalService,
   secondaryMarketService,
   watchlistService,
   settlementWorker,
@@ -251,7 +270,12 @@ export function createApp({
   portfolioService,
   extensionService,
   adminMetricsService,
+  feeScheduleService,
+  issuerReputationService,
+  investorRiskProfileService,
+  draftService,
   invoiceEscrowContractService,
+  waitlistService,
   logger: appLogger = logger,
   metricsEnabled = true,
   metricsRegistry = new MetricsRegistry(),
@@ -281,7 +305,9 @@ export function createApp({
 
   app.use(
     cors({
-      origin: http?.corsAllowedOrigins ?? true,
+      origin: http?.corsAllowedOrigins && http.corsAllowedOrigins.length > 0
+        ? http.corsAllowedOrigins
+        : false,
       credentials: http?.corsAllowCredentials ?? false,
     })
   );
@@ -394,6 +420,7 @@ export function createApp({
 
   app.use("/api/v1/auth", createAuthRouter(authService, appLogger));
   app.use("/auth", createAuthRouter(authService, appLogger));
+  app.use("/api/v1", createCommunityProgramsRouter(dataSource, authService));
 
   if (kycService) {
     app.use("/api/v1/kyc", createKycRouter(kycService, authService));
@@ -424,6 +451,7 @@ export function createApp({
       contractId: pauseGuardContractId,
       invoiceSearchService,
       extensionService,
+      draftService,
     });
     app.use("/api/v1/invoices", invoiceRouter);
     app.use("/invoices", invoiceRouter);
@@ -443,7 +471,11 @@ export function createApp({
 
   // Issue #473 — accreditation acknowledgement
   if (acknowledgementService) {
-    const investorRouter = createInvestorRouter({ authService, acknowledgementService });
+    const investorRouter = createInvestorRouter({
+      authService,
+      acknowledgementService,
+      riskProfileService: investorRiskProfileService,
+    });
     app.use("/api/v1/investors", investorRouter);
     app.use("/investors", investorRouter);
   }
@@ -488,8 +520,17 @@ export function createApp({
     app.use("/api/v1/watchlist", createWatchlistRouter({ watchlistService, authService }));
   }
 
-  // ---- Keys: Ratings Leaderboard ----
-  if (ratingsLeaderboardService) {
+  // Issue #663 — FX rate indexer & currency conversion
+  app.use("/api/v1/fx", createFxRouter());
+  app.use("/fx", createFxRouter());
+
+  // ---- Keys: Ratings Leaderboard, Buy Limits, Curve Migrations, Merge Proposals ----
+  if (
+    ratingsLeaderboardService ||
+    creatorKeyService ||
+    curveMigrationService ||
+    keyMergeProposalService
+  ) {
     app.use(
       "/api/v1/keys",
       createKeysRouter({
@@ -497,6 +538,7 @@ export function createApp({
         authService,
         creatorKeyService,
         curveMigrationService,
+        keyMergeProposalService,
       })
     );
   }
@@ -511,26 +553,29 @@ export function createApp({
 
   // ---- Royalties: creator earnings and claim history (issue #537) ----
   if (royaltyEarningsService) {
-    app.use(
-      "/api/v1/royalties",
-      createRoyaltiesRouter({ royaltyEarningsService, authService })
-    );
+    app.use("/api/v1/royalties", createRoyaltiesRouter({ royaltyEarningsService, authService }));
   }
 
   // ---- Subscriptions: gated-content access check (issue #539) ----
   // Public read: a content gate has to answer before the visitor is known.
   if (subscriptionStatusService) {
-    app.use(
-      "/api/v1/subscriptions",
-      createSubscriptionsRouter({ subscriptionStatusService })
-    );
+    app.use("/api/v1/subscriptions", createSubscriptionsRouter({ subscriptionStatusService }));
   }
 
   // ---- Onboarding: tour completion state (issue #540) ----
   if (onboardingService) {
+    app.use("/api/v1/onboarding", createOnboardingRouter({ onboardingService, authService }));
+  }
+
+  // ---- Issuer Reputation (issue #593) ----
+  if (issuerReputationService && authService) {
     app.use(
-      "/api/v1/onboarding",
-      createOnboardingRouter({ onboardingService, authService })
+      "/api/v1",
+      createIssuerReputationRouter({
+        issuerReputationService,
+        authService,
+        adminWallets: config?.admin?.wallets || [],
+      })
     );
   }
 
@@ -553,9 +598,11 @@ export function createApp({
         extensionService,
         metricsService: adminMetricsService,
         adminSettlementService,
-        adminWallets: config.admin.wallets || [],
-        invoiceEscrowContractService
-
+        adminWallets: config.admin?.wallets || [],
+        invoiceEscrowContractService,
+        feeScheduleService,
+        waitlistService,
+        notificationService
       })
     );
   }

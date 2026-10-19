@@ -23,7 +23,26 @@ export class AppError extends Error {
   code: string;
   details?: unknown;
 
-  constructor(statusCode: number, message: string, code: string, details?: unknown) {
+  constructor(statusCode: number, message: string, code: string, details?: unknown);
+  constructor(message: string, statusCode: number, code?: string, details?: unknown);
+  constructor(arg1: number | string, arg2: string | number, arg3?: string, arg4?: unknown) {
+    let statusCode: number;
+    let message: string;
+    let code: string;
+    let details: unknown;
+
+    if (typeof arg1 === "number") {
+      statusCode = arg1;
+      message = typeof arg2 === "string" ? arg2 : String(arg2);
+      code = arg3 ?? `APP_${statusCode}`;
+      details = arg4;
+    } else {
+      message = arg1;
+      statusCode = typeof arg2 === "number" ? arg2 : 500;
+      code = arg3 ?? `APP_${statusCode}`;
+      details = arg4;
+    }
+
     super(message);
     this.name = "AppError";
     this.statusCode = statusCode;

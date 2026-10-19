@@ -1,0 +1,28 @@
+{
+  "id": "FEAT-002",
+  "type": "feat",
+  "description": "Wire secondary-market sold notifications into SecondaryMarketService. Adds optional notificationService dependency to SecondaryMarketService and its factory, calls createNotification with SECONDARY_MARKET_SOLD after a listing is fully sold in buyListing(), and passes notificationService in src/index.ts. Depends on FEAT-001 (SECONDARY_MARKET_SOLD enum value must exist first).",
+  "status": "completed",
+  "steps": [
+    "1. In src/services/secondary-market.service.ts, add a type import for NotificationService: `import type { NotificationService } from './notification.service'` and add NotificationType, ListingStatus to the existing enums import from '../types/enums' (ListingStatus is already imported — just ensure NotificationType is also imported).",
+    "2. In the SecondaryMarketService constructor, add an optional second parameter: `constructor(private readonly dataSource: DataSource, private readonly notificationService?: NotificationService)`.",
+    "3. In SecondaryMarketService.buyListing(), the method returns inside a `this.dataSource.transaction(...)` callback. To notify after the transaction, change the approach: capture the result of the transaction in a local variable, then fire the notification after the transaction resolves. Specifically: store the transaction result (keep existing BuyListingResult shape intact) and also track `soldListingId`, `soldSellerId`, and a `wasSold` boolean from inside the transaction callback. After `await this.dataSource.transaction(...)` resolves, if wasSold and this.notificationService is defined, call createNotification in a try/catch. Use `soldSellerId ?? soldListing.sellerWallet` as the userId (SecondaryListing.sellerId is the TypeORM User FK, nullable; sellerWallet is always present). Use NotificationType.SECONDARY_MARKET_SOLD, title 'Listing Sold', message 'Your listing for an invoice fraction has been fully purchased.', data { listingId, buyerWallet, quantity, totalPrice }. Catch any error and call logger.warn('secondary.notification.failed', { listing_id, error }).",
+    "4. In the factory function createSecondaryMarketService at the bottom of the file, update its signature to accept an optional second parameter and forward it: `export function createSecondaryMarketService(dataSource: DataSource, notificationService?: NotificationService): SecondaryMarketService { return new SecondaryMarketService(dataSource, notificationService); }`",
+    "5. In src/index.ts, update the factory call from `createSecondaryMarketService(dataSource)` to `createSecondaryMarketService(dataSource, notificationService)`."
+  ],
+  "acceptance_criteria": [
+    "SecondaryMarketService constructor accepts optional second parameter of type NotificationService.",
+    "After buyListing() fully sells a listing (sets status to ListingStatus.SOLD), createNotification is called with the seller's userId, SECONDARY_MARKET_SOLD type, and metadata.",
+    "If createNotification throws, buyListing still returns the BuyListingResult successfully.",
+    "Partial sales (quantity < listing.quantity) do NOT trigger a notification.",
+    "All existing secondary market tests pass without modification.",
+    "npm run type-check passes with no errors."
+  ],
+  "verification": [
+    "npm run type-check  — must produce zero TypeScript errors",
+    "npx jest --testPathPattern secondary-market --forceExit  — all existing secondary market tests pass",
+    "npm run test:ci  — full suite passes with no regressions"
+  ],
+  "blocked_reason": null,
+  "findings": "All 5 steps implemented. NotificationType and NotificationService import added to secondary-market.service.ts. SecondaryMarketService constructor updated with optional notificationService param. buyListing() refactored to capture sold state variables from within the transaction and fire createNotification after the transaction resolves. Notification is wrapped in try/catch and logs warnings on failure. Factory function updated to accept and forward notificationService. src/index.ts updated to pass notificationService to createSecondaryMarketService. Type-check passes with zero errors. Pre-existing CI failures (24 test suites) are unrelated to this change — all caused by a zod v4 module resolution issue."
+}
