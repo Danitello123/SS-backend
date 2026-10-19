@@ -1,8 +1,9 @@
 import crypto from "crypto";
 import { KycService } from "../src/services/kyc.service";
-import { KYCStatus, KYCVerificationType } from "../src/types/enums";
+import { KYCStatus, KYCVerificationType, NotificationType } from "../src/types/enums";
+import type { NotificationService } from "../src/services/notification.service";
 
-function createHarness() {
+function createHarness(notificationService?: NotificationService) {
   const user = { id: "user-1" };
   const verification = {
     id: "verification-1",
@@ -37,7 +38,12 @@ function createHarness() {
     error: jest.fn(),
     child: jest.fn(),
   };
-  const service = new KycService(dataSource as any, "webhook-secret", appLogger as any);
+  const service = new KycService(
+    dataSource as any,
+    "webhook-secret",
+    appLogger as any,
+    notificationService
+  );
   return { service, userRepository, verificationRepository, appLogger };
 }
 
@@ -90,5 +96,62 @@ describe("KycService", () => {
     await expect(
       service.processWebhook({ userId: "user-1", status: KYCStatus.PENDING })
     ).rejects.toMatchObject({ statusCode: 400 });
+  });
+});
+
+describe("KycService — notification paths", () => {
+  function buildNotificationService(
+    overrides: Partial<{ createNotification: jest.Mock }> = {}
+  ): NotificationService {
+    return {
+      createNotification: jest.fn().mockResolvedValue(undefined),
+      ...overrides,
+    } as unknown as NotificationService;
+  }
+
+  it.each([
+    [KYCStatus.APPROVED, NotificationType.KYC_APPROVED, "KYC Approved"],
+    [KYCStatus.REJECTED, NotificationType.KYC_REJECTED, "KYC Status Updated"],
+  ] as const)(
+    "calls createNotification with correct type/title for %s webhook",
+    async (status, expectedType, expectedTitle) => {
+      const notificationService = buildNotificationService();
+      const { service } = createHarness(notificationService);
+
+      await service.processWebhook({ userId: "user-1", status });
+
+      expect(notificationService.createNotification).toHaveBeenCalledWith(
+        "user-1",
+        expectedType,
+        expectedTitle,
+        expect.any(String),
+        expect.objectContaining({ status })
+      );
+    }
+  );
+
+  it("does not call createNotification when no notificationService is provided", async () => {
+    const { service } = createHarness();
+    // processWebhook must not throw even without a notification service
+    await expect(
+      service.processWebhook({ userId: "user-1", status: KYCStatus.APPROVED })
+    ).resolves.toBeUndefined();
+  });
+
+  it("swallows createNotification errors and logs a warning", async () => {
+    const notificationService = buildNotificationService({
+      createNotification: jest.fn().mockRejectedValue(new Error("db down")),
+    });
+    const { service, appLogger } = createHarness(notificationService);
+
+    // processWebhook must still resolve successfully
+    await expect(
+      service.processWebhook({ userId: "user-1", status: KYCStatus.APPROVED })
+    ).resolves.toBeUndefined();
+
+    expect(appLogger.warn).toHaveBeenCalledWith(
+      "kyc.notification.failed",
+      expect.objectContaining({ user_id: "user-1" })
+    );
   });
 });

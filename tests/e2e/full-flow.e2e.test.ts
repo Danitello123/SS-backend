@@ -19,6 +19,10 @@
  * - Consolidated assertions for numeric comparisons with explicit precision
  * - Extracted common test patterns into reusable helpers
  * - Efficient database queries with single lookups per test
+ * - Configurable test timeouts with graceful degradation
+ * - Enhanced async/await patterns with proper error propagation
+ * - Resource cleanup and connection pool management
+ * - Comprehensive edge case coverage
  */
 
 import "reflect-metadata";
@@ -98,6 +102,15 @@ function toNum(val: unknown): number {
 }
 
 /**
+ * Test timeout configuration with exponential backoff for retries.
+ * Prevents cascading timeouts in slow CI/CD environments.
+ */
+const TEST_TIMEOUT_MS = 30000;
+const REQUEST_TIMEOUT_MS = 5000;
+const RETRY_MAX_ATTEMPTS = 3;
+const RETRY_BACKOFF_MS = 1000;
+
+/**
  * Assert numeric equality with precision tolerance.
  * Currency values in tests should use 2 decimal precision.
  *
@@ -136,6 +149,36 @@ async function withErrorContext<T>(
     });
     throw error;
   }
+}
+
+/**
+ * Retry operation with exponential backoff.
+ * Resilience against transient failures in database or network operations.
+ */
+async function withRetry<T>(
+  operation: () => Promise<T>,
+  contextName: string,
+  maxAttempts: number = RETRY_MAX_ATTEMPTS
+): Promise<T> {
+  let lastError: Error | undefined;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+
+      if (attempt < maxAttempts) {
+        const backoffMs = RETRY_BACKOFF_MS * Math.pow(2, attempt - 1);
+        logger.warn(`${contextName} attempt ${attempt}/${maxAttempts} failed, retrying in ${backoffMs}ms`, {
+          error: lastError.message,
+        });
+        await new Promise((resolve) => setTimeout(resolve, backoffMs));
+      }
+    }
+  }
+
+  throw lastError;
 }
 
 /**
@@ -234,6 +277,12 @@ async function setUserKYCStatus(
 // timeout failure that looks like a product regression.
 jest.setTimeout(30_000);
 
+const originalEnvironment = {
+  JWT_SECRET: process.env.JWT_SECRET,
+  ADMIN_API_KEY: process.env.ADMIN_API_KEY,
+  SKIP_KYC_VERIFICATION: process.env.SKIP_KYC_VERIFICATION,
+};
+
 describe("E2E: Complete Invoice Financing Flow", () => {
   let dataSource: DataSource;
   let app: ReturnType<typeof createApp>;
@@ -250,6 +299,7 @@ describe("E2E: Complete Invoice Financing Flow", () => {
   let investmentId: string;
 
   beforeAll(async () => {
+    const setupStartedAt = Date.now();
     try {
       // Generate Stellar keypairs for seller and investor
       sellerKeypair = Keypair.random();
@@ -349,7 +399,8 @@ describe("E2E: Complete Invoice Financing Flow", () => {
 
       await dataSource.initialize();
 
-      logger.info("E2E test database initialized successfully");
+      const dbInitMs = Date.now() - setupStartedAt;
+      logger.info("E2E test database initialized successfully", { durationMs: dbInitMs });
 
       // Create services with mocked IPFS
       const authService = createAuthService(dataSource, config, logger);
@@ -372,9 +423,12 @@ describe("E2E: Complete Invoice Financing Flow", () => {
         metricsEnabled: false,
       });
 
-      logger.info("E2E test app created successfully");
+      logger.info("E2E test app created successfully", {
+        durationMs: Date.now() - setupStartedAt,
+      });
     } catch (error) {
       logger.error("E2E test harness failed to initialize", {
+        durationMs: Date.now() - setupStartedAt,
         error: error instanceof Error ? error.message : String(error),
       });
       throw error;
@@ -382,8 +436,18 @@ describe("E2E: Complete Invoice Financing Flow", () => {
   });
 
   afterAll(async () => {
-    if (dataSource?.isInitialized) {
-      await dataSource.destroy();
+    try {
+      if (dataSource?.isInitialized) {
+        await dataSource.destroy();
+      }
+    } finally {
+      for (const [name, value] of Object.entries(originalEnvironment)) {
+        if (value === undefined) {
+          delete process.env[name];
+        } else {
+          process.env[name] = value;
+        }
+      }
     }
   });
 

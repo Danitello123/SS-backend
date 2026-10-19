@@ -32,6 +32,7 @@ import {
 } from "../lib/settlement-events";
 import type { PaymentDistributorContractService } from "./stellar/payment-distributor-contract.service";
 import type { NotificationService } from "./notification.service";
+import type { IssuerReputationService } from "./issuer-reputation.service";
 
 // settlement.service.ts stores/computes amounts as decimal strings scaled by
 // 10^4 (see decimal-bigint.ts), while stroopsToXlm expects a stroops count
@@ -39,12 +40,41 @@ import type { NotificationService } from "./notification.service";
 // loss of precision, since 7 - 4 = 3.
 const DECIMAL_SCALE_TO_STROOP_FACTOR = 10n ** 3n;
 
+/**
+ * Identity recorded when a background job, rather than a wallet holder,
+ * triggers settlement. It is never a Stellar address, so it must never be
+ * compared against a seller's wallet.
+ */
+export const SYSTEM_SETTLEMENT_ACTOR = "system";
+
+/**
+ * Settlement triggers that only automated infrastructure may request. They
+ * authorize settlement without the actor impersonating the seller's wallet.
+ */
+export type SystemSettlementTrigger = "system_matured";
+
+export type SettlementTrigger = InvoiceTransitionReason | SystemSettlementTrigger;
+
+/**
+ * System actors are either the bare `system` identity or a namespaced job
+ * actor such as `system:invoice-maturity-job`. Anything else is treated as a
+ * wallet address and is still subject to the seller equality check.
+ */
+export function isSystemSettlementActor(actorWallet: string | null | undefined): boolean {
+  if (!actorWallet) return false;
+  return (
+    actorWallet === SYSTEM_SETTLEMENT_ACTOR || actorWallet.startsWith(`${SYSTEM_SETTLEMENT_ACTOR}:`)
+  );
+}
+
 export interface SettleInvoiceInput {
   invoiceId: string;
   proceeds: string;
   actorWallet: string;
   /** Recorded in the status history; defaults to `admin_settled`. */
-  trigger?: InvoiceTransitionReason;
+  trigger?: SettlementTrigger;
+  /** Set for automated settlement of a matured invoice by a background job. */
+  systemTrigger?: SystemSettlementTrigger;
   sellerId?: string;
 }
 
@@ -97,7 +127,8 @@ export class SettlementService {
     private readonly distributorConfig?: PaymentDistributorSettlementConfig,
     private readonly stateMachine: InvoiceStateMachine = createInvoiceStateMachine(),
     private readonly eventEmitter: SettlementEventEmitter = settlementEventEmitter,
-    private readonly notificationService?: NotificationService
+    private readonly notificationService?: NotificationService,
+    private readonly issuerReputationService?: IssuerReputationService
   ) {}
 
   /**
@@ -210,7 +241,10 @@ export class SettlementService {
       actorWallet,
       sellerId,
       trigger = "admin_settled",
+      systemTrigger,
     } = input;
+    const authorizedForAutomatedSettlement =
+      isSystemSettlementActor(actorWallet) || Boolean(systemTrigger);
 
     const proceeds = new Decimal(proceedsInput);
     if (proceeds.isNegative() || proceeds.isZero()) {
@@ -324,7 +358,13 @@ export class SettlementService {
             throw new ServiceError("FORBIDDEN", "Only the seller can settle this invoice", 403);
           }
 
+          // Automated settlement runs without a seller wallet: the worker
+          // identifies itself as a system actor instead of impersonating the
+          // seller. Skip the wallet equality check in that case, otherwise it
+          // would reject every invoice whose seller wallet is unknown. The
+          // explicit sellerId check above still applies.
           if (
+            !authorizedForAutomatedSettlement &&
             actorWallet &&
             invoice.sellerId &&
             typeof transactionalEntityManager.findOne === "function"
@@ -474,11 +514,15 @@ export class SettlementService {
           await transactionalEntityManager.save(SettlementRemainder, settlementRemainderRecord);
 
           // 5. Transition invoice to SETTLED (history row written in this transaction)
+          // `system_matured` has no lifecycle reason of its own; it records the
+          // same settlement outcome as the maturity job does.
+          const transitionReason: InvoiceTransitionReason =
+            trigger === "system_matured" ? "maturity_settled" : trigger;
           const transition = await this.stateMachine.transition(
             entityManagerTransitionStore(transactionalEntityManager),
             invoice,
             InvoiceStatus.SETTLED,
-            { actor: { role: "system", wallet: actorWallet }, trigger }
+            { actor: { role: "system", wallet: actorWallet }, trigger: transitionReason }
           );
 
           if (settlementIntent) {
@@ -539,6 +583,44 @@ export class SettlementService {
 
       // Emit settlement event for downstream processing
       this.eventEmitter.emitSettlement(settlementEvent);
+
+      // Update issuer reputation after settlement
+      if (this.issuerReputationService && result.sellerId) {
+        try {
+          const user = await this.dataSource
+            .getRepository(User)
+            .findOne({ where: { id: result.sellerId } });
+          if (user?.stellarAddress) {
+            const invoice = await this.dataSource
+              .getRepository(Invoice)
+              .findOne({ where: { id: result.invoiceId } });
+            if (invoice) {
+              const dueDate = new Date(invoice.dueDate);
+              const settledDate = new Date();
+              const wasOnTime = settledDate <= dueDate;
+
+              await this.issuerReputationService.updateReputationOnSettlement(
+                user.stellarAddress,
+                result.invoiceId,
+                wasOnTime
+              );
+
+              logger.info("settlement.reputation_updated", {
+                invoiceId: result.invoiceId,
+                wallet: user.stellarAddress,
+                wasOnTime,
+              });
+            }
+          }
+        } catch (reputationError) {
+          logger.error("settlement.reputation_update_failed", {
+            invoiceId: result.invoiceId,
+            error:
+              reputationError instanceof Error ? reputationError.message : String(reputationError),
+          });
+          // Don't fail settlement if reputation update fails
+        }
+      }
 
       // Dispatch settlement notifications to all holders
       if (this.notificationService) {
@@ -776,7 +858,8 @@ export function createSettlementService(
   distributorConfig?: PaymentDistributorSettlementConfig,
   stateMachine?: InvoiceStateMachine,
   eventEmitter?: SettlementEventEmitter,
-  notificationService?: NotificationService
+  notificationService?: NotificationService,
+  issuerReputationService?: IssuerReputationService
 ): SettlementService {
   return new SettlementService(
     dataSource,
@@ -784,6 +867,7 @@ export function createSettlementService(
     distributorConfig,
     stateMachine,
     eventEmitter,
-    notificationService
+    notificationService,
+    issuerReputationService
   );
 }
