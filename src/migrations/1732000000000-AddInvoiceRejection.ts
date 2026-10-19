@@ -8,10 +8,18 @@ import { MigrationInterface, QueryRunner } from "typeorm";
 export class AddInvoiceRejection1732000000000 implements MigrationInterface {
   name = "AddInvoiceRejection1732000000000";
 
+  /**
+   * Postgres refuses `ALTER TYPE ... ADD VALUE` inside a transaction block
+   * (SQLSTATE 25001), and TypeORM wraps each migration in one by default.
+   * Running this migration without a managed transaction keeps the enum
+   * change in autocommit, where it is allowed. Both statements are written
+   * idempotently so a partially applied run can simply be retried.
+   */
+  transaction = false as const;
+
   public async up(queryRunner: QueryRunner): Promise<void> {
-    // Postgres requires ALTER TYPE ... ADD VALUE to run outside of a
-    // surrounding transaction in older versions; guard with IF NOT EXISTS
-    // (supported since PG 9.6+) so this migration is safe to re-run.
+    // Guard with IF NOT EXISTS (supported since PG 9.6+) so this migration is
+    // safe to re-run.
     await queryRunner.query(`
       ALTER TYPE "public"."invoices_invoicestatus_enum" ADD VALUE IF NOT EXISTS 'rejected';
     `);

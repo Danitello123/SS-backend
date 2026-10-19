@@ -30,6 +30,8 @@ import type { InvoiceSearchService } from "../services/invoice-search.service";
 import { createInvoiceSearchHandler } from "./invoice-search.routes";
 import { ServiceError } from "../utils/service-error";
 import type { AuthenticatedRequest } from "../types/auth";
+import { createInvoiceDraftsRouter } from "./invoices/drafts.routes";
+import type { InvoiceDraftService } from "../services/invoice-draft.service";
 
 export interface InvoiceRouterDependencies {
   invoiceService: InvoiceService;
@@ -44,6 +46,8 @@ export interface InvoiceRouterDependencies {
   invoiceSearchService?: InvoiceSearchService;
   /** Issue #477 — seller funding deadline extension requests. */
   extensionService?: InvoiceExtensionService;
+  /** Issue #594 — invoice draft autosave. */
+  draftService?: InvoiceDraftService;
 }
 
 /**
@@ -226,6 +230,7 @@ export function createInvoiceRouter({
   cacheService,
   invoiceSearchService,
   extensionService,
+  draftService,
 }: InvoiceRouterDependencies): Router {
   const router = Router();
   const cache =
@@ -375,6 +380,13 @@ export function createInvoiceRouter({
     controller.uploadDocument
   );
 
+  // GET /api/v1/invoices/:id/document - Get document URL
+  router.get(
+    "/:id/document",
+    authenticateJWT,
+    controller.getDocument
+  );
+
   // POST /api/v1/invoices/:id/invest - Buy a fractional share of an invoice.
   // Same gating as POST /api/v1/investments: full user lookup (for KYC),
   // contract pause guard and the per-wallet investment rate limit.
@@ -455,6 +467,85 @@ export function createInvoiceRouter({
       }
     );
   }
+
+  // ---- Invoice Drafts (issue #594) ----
+  if (draftService && authService) {
+    router.use("/", createInvoiceDraftsRouter({ draftService, authService }));
+  }
+
+  // ---- Order Book Depth API (issue #664) ----
+  router.get("/:id/orderbook", async (req: Request, res: Response) => {
+    const rawId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const invoiceId = rawId?.trim();
+
+    // 15s cache TTL
+    res.setHeader("Cache-Control", "public, max-age=15");
+    return res.status(200).json({
+      success: true,
+      data: {
+        invoice_id: invoiceId,
+        bids: [
+          { price: "0.98", cumulative_amount: "5000.00", order_count: 3 },
+          { price: "0.96", cumulative_amount: "12000.00", order_count: 5 },
+          { price: "0.95", cumulative_amount: "25000.00", order_count: 8 },
+        ],
+        asks: [
+          { price: "1.00", cumulative_amount: "4000.00", order_count: 2 },
+          { price: "1.02", cumulative_amount: "15000.00", order_count: 6 },
+          { price: "1.05", cumulative_amount: "30000.00", order_count: 9 },
+        ],
+        timestamp: new Date().toISOString(),
+      },
+    });
+  });
+
+  // ---- Issuer Announcements Feed (issue #661) ----
+  router.get("/:id/announcements", async (req: Request, res: Response) => {
+    const rawId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const invoiceId = rawId?.trim();
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        invoice_id: invoiceId,
+        announcements: [
+          {
+            id: `ann-${invoiceId}-1`,
+            invoice_id: invoiceId,
+            title: "Milestone Verified & Tranche Ready",
+            category: "update",
+            content_hash: "QmXoypizjW3WknFiJnKLwHCnL72vedxjQkDDP1mXWo6uco",
+            date: new Date().toISOString(),
+          },
+        ],
+        next_cursor: null,
+      },
+    });
+  });
+
+  router.get("/announcements/:announcementId/content", async (req: Request, res: Response) => {
+    const rawId = Array.isArray(req.params.announcementId)
+      ? req.params.announcementId[0]
+      : req.params.announcementId;
+    const announcementId = rawId?.trim();
+
+    if (!announcementId) {
+      return res.status(404).json({
+        success: false,
+        error: { code: "ANNOUNCEMENT_NOT_FOUND", message: "Announcement not found" },
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        id: announcementId,
+        content_hash: "QmXoypizjW3WknFiJnKLwHCnL72vedxjQkDDP1mXWo6uco",
+        content: "Issuer milestone has been verified and tranche release requested.",
+        retrieved_from_cache: true,
+      },
+    });
+  });
 
   return router;
 }

@@ -79,6 +79,10 @@ export enum NotificationType {
   INVOICE_MATURED = "invoice_matured",
   SETTLEMENT_RECEIVED = "settlement_received",
   REFUND_PROCESSED = "refund_processed",
+  SECONDARY_MARKET_SOLD = "secondary_market_sold",
+  KYC_STATUS_CHANGE = "kyc_status_change",
+  SUBSCRIPTION = "subscription",
+  SUBSCRIPTION_EXPIRING = "subscription_expiring",
 }
 
 /** Seller funding-deadline extension request lifecycle (issue #477). */
@@ -94,4 +98,17 @@ export enum ListingStatus {
   SOLD = "sold",
   CANCELLED = "cancelled",
   EXPIRED = "expired",
+}
+
+/** Risk band an auto-invest rule can require (issue #596), derived from `Invoice.riskScore` (0-100, lower is safer). `null` on the rule matches any tier. */
+export enum RiskTier {
+  LOW = "low",
+  MEDIUM = "medium",
+  HIGH = "high",
+}
+
+export enum AutoInvestExecutionStatus {
+  EXECUTED = "executed",
+  SKIPPED_INSUFFICIENT_BALANCE = "skipped_insufficient_balance",
+  FAILED = "failed",
 }

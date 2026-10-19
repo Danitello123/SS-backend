@@ -4,6 +4,7 @@ import { WebhookSubscription } from "../models/WebhookSubscription.model";
 import { WebhookDeliveryLog } from "../models/WebhookDeliveryLog.model";
 import { logger, type AppLogger } from "../observability/logger";
 import { withCorrelationHeaders } from "../observability/request-context";
+import { validateWebhookUrl, UrlValidationError } from "../utils/url-validation";
 
 export function generateWebhookSignature(payload: string, secret: string): string {
   return crypto.createHmac("sha256", secret).update(payload).digest("hex");
@@ -51,10 +52,6 @@ export class WebhookDispatcherService {
     body: string,
     eventId?: string
   ): Promise<WebhookDispatchResult> {
-    // Idempotency: a duplicate event (same subscription + eventId) that has
-    // already been delivered successfully must not be re-delivered, otherwise
-    // the receiving system sees the same downstream notification/state
-    // transition twice.
     if (eventId && (await this.alreadyDelivered(subscription.id, eventId))) {
       this.appLogger.info("webhook.event.already_handled", {
         subscription_id: subscription.id,
@@ -67,6 +64,33 @@ export class WebhookDispatcherService {
         attempts: 0,
         responseStatus: null,
         duplicate: true,
+      };
+    }
+
+    try {
+      validateWebhookUrl(subscription.url);
+    } catch (error) {
+      const errorMsg = error instanceof UrlValidationError ? error.message : "URL validation failed";
+      this.appLogger.warn("webhook.url.validation_failed", {
+        subscription_id: subscription.id,
+        url: subscription.url,
+        error: errorMsg,
+      });
+      await this.logDelivery(
+        subscription.id,
+        eventType,
+        eventId,
+        0,
+        null,
+        false,
+        errorMsg
+      );
+      return {
+        subscriptionId: subscription.id,
+        delivered: false,
+        attempts: 0,
+        responseStatus: null,
+        duplicate: false,
       };
     }
 

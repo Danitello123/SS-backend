@@ -54,8 +54,48 @@ describe("POST /invoices - Invoice Submission for Admin Review (Issue #448)", ()
     adminNotificationQueue.clear();
     process.env.JWT_SECRET = "test-secret";
 
+    // Models the real InvoiceService: createInvoice persists a DRAFT,
+    // submitInvoiceForReview then drives it through the DRAFT -> PENDING
+    // state-machine transition. Keeping both steps (rather than stubbing a
+    // single submitInvoice call) is what this suite guards against
+    // regressing to the old direct-repository-write bypass.
+    let lastCreated: any;
     mockInvoiceService = {
-      createInvoice: jest.fn(),
+      createInvoice: jest.fn(async (input: any) => {
+        lastCreated = {
+          id: "invoice-id-123",
+          sellerId: input.sellerId,
+          invoiceNumber: input.invoiceNumber,
+          customerName: input.customerName,
+          issuerName: null,
+          description: input.description ?? null,
+          amount: input.amount,
+          discountRate: input.discountRate,
+          netAmount: input.amount,
+          dueDate: input.dueDate,
+          status: InvoiceStatus.DRAFT,
+          ipfsHash: input.ipfsHash ?? null,
+          riskScore: null,
+          smartContractId: null,
+          rejectionReason: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          sellerWallet: input.sellerWallet ?? null,
+          title: input.title ?? null,
+          faceValue: input.faceValue ?? null,
+          fundingTarget: input.fundingTarget ?? null,
+          yieldBps: input.yieldBps ?? null,
+          fundingDeadline: input.fundingDeadline ?? null,
+          ipfsDocumentUrl: input.ipfsDocumentUrl ?? null,
+        };
+        return lastCreated;
+      }),
+      submitInvoiceForReview: jest.fn(async ({ invoiceId, sellerId }: any) => {
+        if (!lastCreated || lastCreated.id !== invoiceId || lastCreated.sellerId !== sellerId) {
+          throw new Error("invoice not found");
+        }
+        return { ...lastCreated, status: InvoiceStatus.PENDING };
+      }),
       getInvoiceById: jest.fn(),
       getInvoicesBySellerId: jest.fn(),
       updateInvoice: jest.fn(),
@@ -101,6 +141,16 @@ describe("POST /invoices - Invoice Submission for Admin Review (Issue #448)", ()
     expect(res.body.data.title).toBe(validPayload.title);
     expect(res.body.data.fundingTarget).toBe("47500");
     expect(res.body.data.faceValue).toBe("50000");
+
+    // Regression guard for the state-machine bypass: the handler must drive
+    // the invoice through InvoiceService rather than writing the entity
+    // straight to the repository.
+    expect(mockInvoiceService.createInvoice).toHaveBeenCalledTimes(1);
+    expect(mockInvoiceService.submitInvoiceForReview).toHaveBeenCalledTimes(1);
+    expect(mockInvoiceService.submitInvoiceForReview).toHaveBeenCalledWith({
+      invoiceId: "invoice-id-123",
+      sellerId,
+    });
 
     // Check admin notification queue received event
     const events = adminNotificationQueue.getEvents("invoice_submitted");

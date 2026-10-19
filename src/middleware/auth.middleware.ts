@@ -37,8 +37,11 @@ export const MAX_BEARER_TOKEN_LENGTH = 4_096;
  */
 export const DEFAULT_AUTH_LOOKUP_TIMEOUT_MS = 5_000;
 
-/** Tokens are signed by AuthService with the default HMAC algorithm. */
-const ALLOWED_JWT_ALGORITHMS: jwt.Algorithm[] = ["HS256", "RS256", "ES256"];
+/**
+ * Tokens are verified against the symmetric JWT_SECRET, so only HMAC is
+ * accepted. Allowing RS256/ES256 here would open algorithm confusion attacks.
+ */
+export const ALLOWED_JWT_ALGORITHMS: jwt.Algorithm[] = ["HS256"];
 
 const JWT_SHAPE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$/;
 
@@ -175,26 +178,36 @@ export function createAuthMiddleware(
         return;
       }
 
-      if (!(error instanceof jwt.JsonWebTokenError)) {
-        logger.warn("Unexpected error during authentication; rejecting token", {
-          method: req.method,
-          path: req.path,
-          error: error instanceof Error ? error.message : String(error),
-        });
+      if (error instanceof jwt.JsonWebTokenError) {
+        next(
+          new HttpError(
+            401,
+            "Invalid or expired token.",
+            buildAuthFailureDetails(token, classifyJwtError(error))
+          )
+        );
+        return;
       }
 
-      next(
-        new HttpError(
-          401,
-          "Invalid or expired token.",
-          buildAuthFailureDetails(token, classifyJwtError(error))
-        )
-      );
+      logger.error('Failed to process', { error });
+      next(new AppError(500, 'Processing failed', 'AUTH_PROCESSING_FAILED'));
     }
   };
 }
 
-export function authenticateJWT(req: Request, _res: Response, next: NextFunction): void {
+async function processEfficiently(token: string, secret: string): Promise<jwt.JwtPayload> {
+  return new Promise((resolve, reject) => {
+    jwt.verify(token, secret, { algorithms: ALLOWED_JWT_ALGORITHMS }, (error, payload) => {
+      if (error) {
+        reject(error);
+      } else {
+        resolve(payload as jwt.JwtPayload);
+      }
+    });
+  });
+}
+
+export async function authenticateJWT(req: Request, _res: Response, next: NextFunction): Promise<void> {
   const extracted = extractBearerToken(req.headers.authorization);
   if (!extracted.ok) {
     next(missingOrMalformedTokenError(extracted));
@@ -228,17 +241,23 @@ export function authenticateJWT(req: Request, _res: Response, next: NextFunction
     return;
   }
 
-  let payload: string | jwt.JwtPayload;
+  let payload: jwt.JwtPayload;
   try {
-    payload = jwt.verify(token, secret, { algorithms: ALLOWED_JWT_ALGORITHMS });
+    payload = await processEfficiently(token, secret);
   } catch (error) {
-    next(
-      new HttpError(
-        401,
-        "Invalid or expired token.",
-        buildAuthFailureDetails(token, classifyJwtError(error))
-      )
-    );
+    if (error instanceof jwt.JsonWebTokenError) {
+      next(
+        new HttpError(
+          401,
+          "Invalid or expired token.",
+          buildAuthFailureDetails(token, classifyJwtError(error))
+        )
+      );
+      return;
+    }
+
+    globalLogger.error('Failed to process', { error });
+    next(new AppError(500, 'Processing failed', 'AUTH_PROCESSING_FAILED'));
     return;
   }
 
@@ -339,7 +358,7 @@ export function requireSeller() {
   };
 }
 
-export function requireAdmin(adminWallets: string[]) {
+export function requireAdmin(adminWallets: string[] = []) {
   return (req: Request, _res: Response, next: NextFunction): void => {
     const user = (req as AuthenticatedRequest).user;
     if (!user) {
@@ -347,12 +366,15 @@ export function requireAdmin(adminWallets: string[]) {
       return;
     }
 
-    if (!adminWallets.includes(user.stellarAddress)) {
-      next(new AppError(403, "Admin privileges required", "ADMIN_REQUIRED"));
+    if (
+      user.userType === UserType.ADMIN ||
+      (adminWallets.length > 0 && adminWallets.includes(user.stellarAddress))
+    ) {
+      next();
       return;
     }
 
-    next();
+    next(new AppError(403, "Admin privileges required", "ADMIN_REQUIRED"));
   };
 }
 
