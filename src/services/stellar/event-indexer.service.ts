@@ -1,4 +1,5 @@
-import { SorobanRpc, scValToNative, xdr } from "stellar-sdk";
+import { scValToNative, xdr } from "@stellar/stellar-sdk";
+import * as SorobanRpc from "@stellar/stellar-sdk/lib/esm/rpc";
 import type { DataSource, Repository } from "typeorm";
 import type { AppLogger } from "../../observability/logger";
 import { logger as globalLogger } from "../../observability/logger";
@@ -163,23 +164,21 @@ export class EventIndexerService {
         },
       ];
 
-      const requestParams: SorobanRpc.Server.GetEventsRequest = {
+      const requestParams = {
         filters,
         limit: options.limit ?? 100,
-      };
+        cursor: options.cursor ?? "now",
+      } as unknown as SorobanRpc.Server.GetEventsRequest;
 
       if (startLedger > 1) {
-        requestParams.startLedger = startLedger;
-      }
-
-      if (options.cursor) {
-        requestParams.cursor = options.cursor;
+        // startLedger may be omitted from some RPC types; set it conditionally
+        (requestParams as any).startLedger = startLedger;
       }
 
       const response = await this.rpcServer.getEvents(requestParams);
       const events = response.events || [];
 
-      const decodedEvents = events.map((e) => this.decodeEvent(e));
+      const decodedEvents = events.map((e: SorobanRpc.Api.GetEventsResponse['events'][0]) => this.decodeEvent(e));
 
       this.logger.info("Polled Soroban contract events", {
         startLedger,
