@@ -3,7 +3,7 @@ import Decimal from "decimal.js";
 import { Invoice } from "../models/Invoice.model";
 import { Investment } from "../models/Investment.model";
 import { User } from "../models/User.model";
-import { InvoiceStatus, KYCStatus } from "../types/enums";
+import { InvoiceStatus, KYCStatus, UserType } from "../types/enums";
 import { ServiceError } from "../utils/service-error";
 import { validateInvoiceForPublish } from "../lib/validate-invoice-for-publish";
 import {
@@ -16,7 +16,6 @@ import {
 } from "../lib/invoice-state-machine";
 import { InvoiceStatusHistory } from "../models/InvoiceStatusHistory.model";
 import { logger } from "../observability/logger";
-import { AppError } from "../utils/http-error";
 import type { IPFSService, IPFSUploadResult } from "./ipfs.service";
 import { decodeInvoiceCursor, encodeInvoiceCursor } from "../utils/invoice-cursor.utils";
 
@@ -77,6 +76,14 @@ export interface CreateInvoiceInput {
   dueDate: Date;
   ipfsHash?: string;
   riskScore?: string;
+  /** Extra columns captured by the public self-serve submission flow. */
+  sellerWallet?: string | null;
+  title?: string | null;
+  faceValue?: string | null;
+  fundingTarget?: string | null;
+  yieldBps?: number | null;
+  fundingDeadline?: Date | null;
+  ipfsDocumentUrl?: string | null;
 }
 
 export interface UpdateInvoiceInput {
@@ -170,6 +177,13 @@ export interface InvoiceDTO {
   createdAt: Date;
   updatedAt: Date;
   commitments?: CommitmentDTO[];
+  sellerWallet?: string | null;
+  title?: string | null;
+  faceValue?: string | null;
+  fundingTarget?: string | null;
+  yieldBps?: number | null;
+  fundingDeadline?: Date | null;
+  ipfsDocumentUrl?: string | null;
 }
 
 export interface GetInvoicesOptions {
@@ -306,6 +320,13 @@ export class InvoiceService {
         ipfsHash: input.ipfsHash?.trim() || null,
         riskScore: input.riskScore?.trim() || null,
         status: InvoiceStatus.DRAFT,
+        sellerWallet: input.sellerWallet ?? null,
+        title: input.title?.trim() || null,
+        faceValue: input.faceValue ?? null,
+        fundingTarget: input.fundingTarget ?? null,
+        yieldBps: input.yieldBps ?? null,
+        fundingDeadline: input.fundingDeadline ?? null,
+        ipfsDocumentUrl: input.ipfsDocumentUrl?.trim() || null,
       } as Partial<Invoice>);
 
       const saved = await this.invoiceRepository.save(invoice);
@@ -500,30 +521,36 @@ export class InvoiceService {
     skip?: number;
     status?: InvoiceStatus;
   }): Promise<{ invoices: InvoiceDTO[]; total: number; limit: number; hasMore: boolean }> {
-    const limit = Math.max(1, Math.min(options.limit ?? 20, 100));
-    const skip = Math.max(0, Math.min(options.skip ?? 0, 10000));
+    try {
+      const limit = Math.max(1, Math.min(options.limit ?? 20, 100));
+      const skip = Math.max(0, Math.min(options.skip ?? 0, 10000));
 
-    const where: FindOptionsWhere<Invoice> = {
-      deletedAt: IsNull(),
-      status: options.status ?? InvoiceStatus.PENDING,
-    };
+      const where: FindOptionsWhere<Invoice> = {
+        deletedAt: IsNull(),
+        status: options.status ?? InvoiceStatus.PENDING,
+      };
 
-    const [invoices, total] = await Promise.all([
-      this.invoiceRepository.find({
-        where,
-        skip,
-        take: limit,
-        order: { createdAt: "DESC" },
-      }),
-      this.invoiceRepository.count({ where }),
-    ]);
+      const [invoices, total] = await Promise.all([
+        this.invoiceRepository.find({
+          where,
+          skip,
+          take: limit,
+          order: { createdAt: "DESC" },
+        }),
+        this.invoiceRepository.count({ where }),
+      ]);
 
-    return {
-      invoices: invoices.map((inv) => this.toDTO(inv)),
-      total,
-      limit,
-      hasMore: skip + invoices.length < total,
-    };
+      return {
+        invoices: invoices.map((inv) => this.toDTO(inv)),
+        total,
+        limit,
+        hasMore: skip + invoices.length < total,
+      };
+    } catch (error) {
+      if (error instanceof ServiceError) throw error;
+      logger.error("Failed to fetch pending invoices for admin", { error });
+      throw new ServiceError("invoice_list_failed", "Failed to fetch pending invoices", 500);
+    }
   }
 
   /**
@@ -586,8 +613,8 @@ export class InvoiceService {
       return this.toDTO(updated);
     } catch (error) {
       if (error instanceof ServiceError) throw error;
-      logger.error('Failed to process', { error });
-      throw new AppError(500, 'Processing failed', 'PROCESSING_FAILED', { error });
+      logger.error("Failed to update invoice", { error, invoiceId: input.invoiceId });
+      throw new ServiceError("invoice_update_failed", "Failed to update invoice", 500);
     }
   }
 
@@ -613,11 +640,11 @@ export class InvoiceService {
         );
       }
 
-      // Only draft and cancelled invoices can be deleted
-      if (invoice.status !== InvoiceStatus.DRAFT && invoice.status !== InvoiceStatus.CANCELLED) {
+      // Only draft invoices can be deleted
+      if (invoice.status !== InvoiceStatus.DRAFT) {
         throw new ServiceError(
           "invalid_invoice_status",
-          `Cannot delete invoice in ${invoice.status} status`,
+          `Cannot delete invoice in ${invoice.status} status. Only draft invoices can be deleted.`,
           400
         );
       }
@@ -626,8 +653,8 @@ export class InvoiceService {
       await this.invoiceRepository.save(invoice);
     } catch (error) {
       if (error instanceof ServiceError) throw error;
-      logger.error('Failed to process', { error });
-      throw new AppError(500, 'Processing failed', 'PROCESSING_FAILED', { error });
+      logger.error("Failed to delete invoice", { error, invoiceId });
+      throw new ServiceError("invoice_delete_failed", "Failed to delete invoice", 500);
     }
   }
 
@@ -674,8 +701,8 @@ export class InvoiceService {
       return this.toDTO(updated);
     } catch (error) {
       if (error instanceof ServiceError) throw error;
-      logger.error('Failed to process', { error });
-      throw new AppError(500, 'Processing failed', 'PROCESSING_FAILED', { error });
+      logger.error("Failed to publish invoice", { error, invoiceId: input.invoiceId });
+      throw new ServiceError("invoice_publish_failed", "Failed to publish invoice", 500);
     }
   }
 
@@ -756,30 +783,36 @@ export class InvoiceService {
     invoiceId: string,
     sellerId: string
   ): Promise<InvoiceStatusHistoryDTO[]> {
-    const invoice = await this.invoiceRepository.findOne({ where: { id: invoiceId } });
-    if (!invoice || invoice.sellerId !== sellerId) {
-      throw new ServiceError("invoice_not_found", "Invoice not found", 404);
+    try {
+      const invoice = await this.invoiceRepository.findOne({ where: { id: invoiceId } });
+      if (!invoice || invoice.sellerId !== sellerId) {
+        throw new ServiceError("invoice_not_found", "Invoice not found", 404);
+      }
+
+      if (!this.dataSource) {
+        return [];
+      }
+
+      const rows = await this.dataSource.getRepository(InvoiceStatusHistory).find({
+        where: { invoiceId },
+        order: { createdAt: "ASC" },
+      });
+
+      return rows.map((row) => ({
+        id: row.id,
+        fromStatus: row.fromStatus,
+        toStatus: row.toStatus,
+        actorRole: row.actorRole,
+        actorId: row.actorId,
+        trigger: row.trigger,
+        reason: row.reason,
+        createdAt: row.createdAt,
+      }));
+    } catch (error) {
+      if (error instanceof ServiceError) throw error;
+      logger.error("Failed to fetch invoice status history", { error, invoiceId });
+      throw new ServiceError("invoice_history_failed", "Failed to fetch invoice status history", 500);
     }
-
-    if (!this.dataSource) {
-      return [];
-    }
-
-    const rows = await this.dataSource.getRepository(InvoiceStatusHistory).find({
-      where: { invoiceId },
-      order: { createdAt: "ASC" },
-    });
-
-    return rows.map((row) => ({
-      id: row.id,
-      fromStatus: row.fromStatus,
-      toStatus: row.toStatus,
-      actorRole: row.actorRole,
-      actorId: row.actorId,
-      trigger: row.trigger,
-      reason: row.reason,
-      createdAt: row.createdAt,
-    }));
   }
 
   /**
@@ -988,6 +1021,59 @@ export class InvoiceService {
   }
 
   /**
+   * Generates a signed URL for an invoice document, verifying authorization.
+   */
+  async getDocumentUrl(input: {
+    invoiceId: string;
+    requesterId?: string;
+    requesterType?: string;
+    isAdmin?: boolean;
+  }): Promise<string> {
+    try {
+      const invoiceId = input.invoiceId?.trim();
+      if (!invoiceId) {
+         throw new ServiceError("invalid_input", "Invoice id is required", 400);
+      }
+
+      const invoice = await this.invoiceRepository.findOne({
+        where: { id: invoiceId },
+      });
+
+      if (!invoice) {
+        throw new ServiceError("invoice_not_found", "Invoice not found", 404);
+      }
+
+      if (!invoice.ipfsHash) {
+        throw new ServiceError(
+          "document_not_found",
+          "This invoice does not have an attached document",
+          404
+        );
+      }
+
+      if (!input.isAdmin) {
+        // Must be an investor, or the seller who owns the invoice
+        if (input.requesterType !== UserType.INVESTOR && input.requesterType !== UserType.BOTH) {
+           if (invoice.sellerId !== input.requesterId) {
+              throw new ServiceError(
+                 "unauthorized_invoice_access",
+                 "You do not have permission to view this document",
+                 403
+              );
+           }
+        }
+      }
+
+      // This will generate the signed URL via Pinata API and log the attempt, throwing 503 on IPFS failure
+      return this.ipfsService.generateSignedUrl(invoice.ipfsHash);
+    } catch (error) {
+      if (error instanceof ServiceError) throw error;
+      logger.error("Failed to get document URL", { error, invoiceId: input.invoiceId });
+      throw new ServiceError("document_url_failed", "Failed to get document URL", 500);
+    }
+  }
+
+  /**
    * Get all token holders for a published invoice with their token balances and percentage shares
    */
   async getInvoiceTokenHolders(invoiceId: string, sellerId: string): Promise<
@@ -998,67 +1084,73 @@ export class InvoiceService {
       committed_at: Date;
     }>
   > {
-    const invoice = await this.invoiceRepository.findOne({
-      where: { id: invoiceId },
-    });
+    try {
+      const invoice = await this.invoiceRepository.findOne({
+        where: { id: invoiceId },
+      });
 
-    if (!invoice) {
-      throw new ServiceError("invoice_not_found", "Invoice not found", 404);
-    }
+      if (!invoice) {
+        throw new ServiceError("invoice_not_found", "Invoice not found", 404);
+      }
 
-    if (invoice.sellerId !== sellerId) {
-      throw new ServiceError("forbidden", "You can only view investors for your own invoices", 403);
-    }
+      if (invoice.sellerId !== sellerId) {
+        throw new ServiceError("forbidden", "You can only view investors for your own invoices", 403);
+      }
 
-    if (invoice.status === InvoiceStatus.DRAFT) {
-      throw new ServiceError(
-        "invalid_invoice_status",
-        "Token holders can only be queried for published invoices",
-        400
+      if (invoice.status === InvoiceStatus.DRAFT) {
+        throw new ServiceError(
+          "invalid_invoice_status",
+          "Token holders can only be queried for published invoices",
+          400
+        );
+      }
+
+      if (!this.dataSource) {
+        throw new ServiceError("internal_error", "Database connection unavailable", 500);
+      }
+
+      const investmentRepository = this.dataSource.getRepository(Investment);
+
+      const investments = await investmentRepository
+        .createQueryBuilder("investment")
+        .leftJoinAndSelect("investment.investor", "investor")
+        .where("investment.invoiceId = :invoiceId", { invoiceId })
+        .andWhere("investment.deletedAt IS NULL")
+        .getMany();
+
+      if (investments.length === 0) {
+        return [];
+      }
+
+      const totalInvested = investments.reduce(
+        (sum, inv) => sum.plus(new Decimal(inv.investmentAmount)),
+        new Decimal(0)
       );
+
+      return investments.map((investment) => {
+        const investor = investment.investor as unknown as User;
+        const percentage = totalInvested.isZero()
+          ? new Decimal(0)
+          : new Decimal(investment.investmentAmount)
+              .dividedBy(totalInvested)
+              .times(100)
+              .toDecimalPlaces(2);
+
+        const address = investor.stellarAddress || "";
+        const truncatedWallet = address.length > 8 ? `${address.slice(0, 4)}...${address.slice(-4)}` : address;
+
+        return {
+          wallet: truncatedWallet,
+          amount: investment.investmentAmount,
+          share_percent: percentage.toFixed(2),
+          committed_at: investment.createdAt,
+        };
+      });
+    } catch (error) {
+      if (error instanceof ServiceError) throw error;
+      logger.error("Failed to fetch invoice token holders", { error, invoiceId });
+      throw new ServiceError("token_holders_fetch_failed", "Failed to fetch invoice token holders", 500);
     }
-
-    if (!this.dataSource) {
-      throw new ServiceError("internal_error", "Database connection unavailable", 500);
-    }
-
-    const investmentRepository = this.dataSource.getRepository(Investment);
-
-    const investments = await investmentRepository
-      .createQueryBuilder("investment")
-      .leftJoinAndSelect("investment.investor", "investor")
-      .where("investment.invoiceId = :invoiceId", { invoiceId })
-      .andWhere("investment.deletedAt IS NULL")
-      .getMany();
-
-    if (investments.length === 0) {
-      return [];
-    }
-
-    const totalInvested = investments.reduce(
-      (sum, inv) => sum.plus(new Decimal(inv.investmentAmount)),
-      new Decimal(0)
-    );
-
-    return investments.map((investment) => {
-      const investor = investment.investor as unknown as User;
-      const percentage = totalInvested.isZero()
-        ? new Decimal(0)
-        : new Decimal(investment.investmentAmount)
-            .dividedBy(totalInvested)
-            .times(100)
-            .toDecimalPlaces(2);
-
-      const address = investor.stellarAddress || "";
-      const truncatedWallet = address.length > 8 ? `${address.slice(0, 4)}...${address.slice(-4)}` : address;
-
-      return {
-        wallet: truncatedWallet,
-        amount: investment.investmentAmount,
-        share_percent: percentage.toFixed(2),
-        committed_at: investment.createdAt,
-      };
-    });
   }
 
   /**
@@ -1070,28 +1162,34 @@ export class InvoiceService {
     contractId: string | null;
     status: string | null;
   }> {
-    const invoice = await this.invoiceRepository.findOne({
-      where: { id: invoiceId },
-    });
+    try {
+      const invoice = await this.invoiceRepository.findOne({
+        where: { id: invoiceId },
+      });
 
-    if (!invoice) {
-      throw new ServiceError("invoice_not_found", "Invoice not found", 404);
+      if (!invoice) {
+        throw new ServiceError("invoice_not_found", "Invoice not found", 404);
+      }
+
+      if (!invoice.smartContractId) {
+        throw new ServiceError(
+          "no_escrow_contract",
+          "This invoice does not have a deployed escrow contract",
+          404
+        );
+      }
+
+      return {
+        invoiceId: invoice.id,
+        hasEscrow: true,
+        contractId: invoice.smartContractId,
+        status: invoice.status,
+      };
+    } catch (error) {
+      if (error instanceof ServiceError) throw error;
+      logger.error("Failed to fetch invoice escrow status", { error, invoiceId });
+      throw new ServiceError("escrow_status_fetch_failed", "Failed to fetch escrow status", 500);
     }
-
-    if (!invoice.smartContractId) {
-      throw new ServiceError(
-        "no_escrow_contract",
-        "This invoice does not have a deployed escrow contract",
-        404
-      );
-    }
-
-    return {
-      invoiceId: invoice.id,
-      hasEscrow: true,
-      contractId: invoice.smartContractId,
-      status: invoice.status,
-    };
   }
 
   /**
@@ -1116,6 +1214,13 @@ export class InvoiceService {
       rejectionReason: invoice.rejectionReason ?? null,
       createdAt: invoice.createdAt,
       updatedAt: invoice.updatedAt,
+      sellerWallet: invoice.sellerWallet ?? null,
+      title: invoice.title ?? null,
+      faceValue: invoice.faceValue ?? null,
+      fundingTarget: invoice.fundingTarget ?? null,
+      yieldBps: invoice.yieldBps ?? null,
+      fundingDeadline: invoice.fundingDeadline ?? null,
+      ipfsDocumentUrl: invoice.ipfsDocumentUrl ?? null,
     };
   }
 }

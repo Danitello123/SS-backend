@@ -42,11 +42,13 @@ export interface NotificationRepositoryContract {
     type: NotificationType,
     title: string,
     message: string,
-    data?: Record<string, unknown>
+    data?: Record<string, unknown>,
+    dedupeKey?: string | null
   ): Promise<Notification>;
   /** Inserts all entries in a single statement. */
   createMany(entries: NotificationInput[]): Promise<void>;
   findByIdAndUserId(id: string, userId: string): Promise<Notification | null>;
+  findByDedupeKey?(dedupeKey: string): Promise<Notification | null>;
   markRead(id: string, userId: string): Promise<Notification>;
   /** Marks every unread notification of the user as read in one statement; returns how many changed. */
   markAllRead(userId: string, walletAddress?: string): Promise<number>;
@@ -69,9 +71,17 @@ export class NotificationService {
     type: NotificationType,
     title: string,
     message: string,
-    data?: Record<string, unknown>
+    data?: Record<string, unknown>,
+    dedupeKey?: string | null
   ): Promise<Notification> {
-    return this.notificationRepository.create(userId, type, title, message, data);
+    return this.notificationRepository.create(userId, type, title, message, data, dedupeKey);
+  }
+
+  async findByDedupeKey(dedupeKey: string): Promise<Notification | null> {
+    if (this.notificationRepository.findByDedupeKey) {
+      return this.notificationRepository.findByDedupeKey(dedupeKey);
+    }
+    return null;
   }
 
   /**
@@ -128,9 +138,17 @@ class TypeOrmNotificationRepository implements NotificationRepositoryContract {
     type: NotificationType,
     title: string,
     message: string,
-    data?: Record<string, unknown>
+    data?: Record<string, unknown>,
+    dedupeKey?: string | null
   ): Promise<Notification> {
-    const entity = this.repository.create({ userId, type, title, message, data });
+    const entity = this.repository.create({
+      userId,
+      type,
+      title,
+      message,
+      data,
+      ...(dedupeKey !== undefined ? { dedupeKey } : {}),
+    });
     return this.repository.save(entity);
   }
 
@@ -141,12 +159,17 @@ class TypeOrmNotificationRepository implements NotificationRepositoryContract {
       title: entry.title,
       message: entry.message,
       data: entry.data || null,
+      ...(entry.dedupeKey !== undefined ? { dedupeKey: entry.dedupeKey } : {}),
     }));
     await this.repository.save(entities);
   }
 
   findByIdAndUserId(id: string, userId: string): Promise<Notification | null> {
     return this.repository.findOne({ where: { id, userId } });
+  }
+
+  async findByDedupeKey(dedupeKey: string): Promise<Notification | null> {
+    return this.repository.findOne({ where: { dedupeKey } });
   }
 
   async markAllRead(userId: string, walletAddress?: string): Promise<number> {

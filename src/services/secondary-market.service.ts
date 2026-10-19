@@ -3,9 +3,10 @@ import { Decimal } from "decimal.js";
 import { SecondaryListing } from "../models/SecondaryListing.model";
 import { Invoice } from "../models/Invoice.model";
 import { Investment } from "../models/Investment.model";
-import { ListingStatus, InvoiceStatus, InvestmentStatus } from "../types/enums";
+import { ListingStatus, InvoiceStatus, InvestmentStatus, NotificationType } from "../types/enums";
 import { ServiceError } from "../utils/service-error";
 import { logger } from "../observability/logger";
+import type { NotificationService } from "./notification.service";
 
 export interface CreateListingInput {
   invoiceId: string;
@@ -69,7 +70,10 @@ export interface BuyListingResult {
 }
 
 export class SecondaryMarketService {
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly notificationService?: NotificationService
+  ) {}
 
   /**
    * Create a new secondary market listing for invoice fractions.
@@ -299,8 +303,16 @@ export class SecondaryMarketService {
    * Transfer a listed holding between investors.
    */
   async buyListing(input: BuyListingInput): Promise<BuyListingResult> {
-    return this.dataSource.transaction(async (manager: EntityManager) => {
-      const { listingId, buyerWallet, buyerId, quantity } = input;
+    let wasSold = false;
+    let soldSellerId: string | undefined;
+    let soldSellerWallet: string | undefined;
+    let soldListingId: string | undefined;
+    let soldBuyerWallet: string | undefined;
+    let soldQuantity: string | undefined;
+    let soldTotalPrice: string | undefined;
+
+    const result = await this.dataSource.transaction(async (manager: EntityManager) => {
+      const { listingId, buyerWallet, quantity } = input;
 
       // Get listing
       const listing = await manager.findOne(SecondaryListing, {
@@ -436,6 +448,15 @@ export class SecondaryMarketService {
       if (buyQuantity.equals(new Decimal(listing.quantity))) {
         listing.status = ListingStatus.SOLD;
         await manager.save(listing);
+
+        // Track data for post-transaction notification
+        wasSold = true;
+        soldListingId = listingId;
+        soldSellerId = listing.sellerId ?? undefined;
+        soldSellerWallet = listing.sellerWallet;
+        soldBuyerWallet = buyerWallet;
+        soldQuantity = buyQuantity.toFixed(4);
+        soldTotalPrice = totalPrice.toFixed(4);
       } else {
         // Partial sale - reduce quantity
         const remainingQuantity = new Decimal(listing.quantity).minus(buyQuantity);
@@ -458,6 +479,36 @@ export class SecondaryMarketService {
         totalPrice: totalPrice.toFixed(4),
       };
     });
+
+    // Fire notification after transaction commits — never throw out of here
+    if (wasSold && this.notificationService) {
+      try {
+        const userId = soldSellerId ?? soldSellerWallet;
+        if (!userId) {
+          logger.warn("secondary.notification.skipped", {
+            listing_id: soldListingId,
+            reason: "no_seller_identity",
+          });
+          return result;
+        }
+        await this.notificationService.createNotification(
+          userId,
+          NotificationType.SECONDARY_MARKET_SOLD,
+          "Listing Sold",
+          "Your listing for an invoice fraction has been fully purchased.",
+          {
+            listingId: soldListingId,
+            buyerWallet: soldBuyerWallet,
+            quantity: soldQuantity,
+            totalPrice: soldTotalPrice,
+          }
+        );
+      } catch (error) {
+        logger.warn("secondary.notification.failed", { listing_id: soldListingId, error });
+      }
+    }
+
+    return result;
   }
 
   /**
@@ -504,6 +555,6 @@ export class SecondaryMarketService {
   }
 }
 
-export function createSecondaryMarketService(dataSource: DataSource): SecondaryMarketService {
-  return new SecondaryMarketService(dataSource);
+export function createSecondaryMarketService(dataSource: DataSource, notificationService?: NotificationService): SecondaryMarketService {
+  return new SecondaryMarketService(dataSource, notificationService);
 }
