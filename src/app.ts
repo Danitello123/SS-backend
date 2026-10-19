@@ -51,6 +51,7 @@ import { createSubscriptionsRouter } from "./routes/subscriptions.routes";
 import { createOnboardingRouter } from "./routes/onboarding.routes";
 import { createCommunityProgramsRouter } from "./routes/community-programs.routes";
 import { createFxRouter } from "./routes/fx.routes";
+import { createIssuerReputationRouter } from "./routes/issuer-reputation.routes";
 
 import type { AuthService } from "./services/auth.service";
 import type { WaitlistService } from "./services/waitlist.service";
