@@ -40,12 +40,12 @@ function createFakeDataSource(benchmarks: SectorBenchmark[] = [], invoices: Invo
           save: async (row: SectorBenchmark) => {
             const idx = saved.findIndex((b) => b.sector === row.sector);
             const full = {
-              id: row.id ?? `bench-${saved.length + 1}`,
-              sampleCount: 0,
-              lastEventId: null,
-              createdAt: new Date(),
-              updatedAt: new Date(),
               ...row,
+              id: row.id ?? `bench-${saved.length + 1}`,
+              sampleCount: row.sampleCount ?? 0,
+              lastEventId: row.lastEventId ?? null,
+              createdAt: row.createdAt ?? new Date(),
+              updatedAt: row.updatedAt ?? new Date(),
             } as SectorBenchmark;
             if (idx >= 0) saved[idx] = full;
             else saved.push(full);

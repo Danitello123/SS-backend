@@ -50,6 +50,7 @@ import { createRoyaltiesRouter } from "./routes/royalties.routes";
 import { createSubscriptionsRouter } from "./routes/subscriptions.routes";
 import { createOnboardingRouter } from "./routes/onboarding.routes";
 import { createCommunityProgramsRouter } from "./routes/community-programs.routes";
+import { createIssuerReputationRouter } from "./routes/issuer-reputation.routes";
 import { createOnchainEventViewsRouter } from "./routes/onchain-event-views.routes";
 import { createFxRouter } from "./routes/fx.routes";
 import {
