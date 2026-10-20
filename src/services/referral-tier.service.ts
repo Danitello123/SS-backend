@@ -6,6 +6,7 @@ import { ServiceError } from "../utils/service-error";
 import { TtlCache } from "../lib/ttl-cache";
 
 const CACHE_TTL_MS = 60_000;
+const CACHE_TTL_SECONDS = CACHE_TTL_MS / 1000;
 const HISTORY_PAGE_SIZE = 20;
 
 /** Volume thresholds (in referred volume units) that gate each tier. */
@@ -66,7 +67,10 @@ export interface ReferralTierHistoryPage {
  * history get Standard defaults at read time.
  */
 export class ReferralTierService {
-  private readonly cache = new TtlCache<ReferralTierView>(CACHE_TTL_MS);
+  private readonly cache = new TtlCache({
+    ttlSeconds: CACHE_TTL_SECONDS,
+    namespace: "referral-tier",
+  });
 
   constructor(private readonly dataSource: DataSource) {}
 
@@ -103,7 +107,7 @@ export class ReferralTierService {
 
   async getTier(wallet: string): Promise<ReferralTierView> {
     const normalized = wallet.trim();
-    const cached = this.cache.get(normalized);
+    const cached = await this.cache.get<ReferralTierView>(normalized);
     if (cached) return cached;
 
     const row = await this.dataSource.getRepository(ReferralTier).findOneBy({
@@ -111,7 +115,7 @@ export class ReferralTierService {
     });
 
     const view = row ? toView(row) : defaultView(normalized);
-    this.cache.set(normalized, view);
+    await this.cache.set(normalized, view);
     return view;
   }
 

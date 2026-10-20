@@ -36,7 +36,9 @@ export function createCommunityProgramsRouter(dataSource: DataSource, authServic
   });
   router.get("/waitlist/:wallet", async (req: Request, res: Response, next) => {
     try {
-      const entry = await dataSource.getRepository(WaitlistEntry).findOne({ where: { wallet: req.params.wallet } });
+      const entry = await dataSource.getRepository(WaitlistEntry).findOne({
+        where: { wallet: String(req.params.wallet) },
+      });
       if (!entry) { res.status(404).json({ success: false, error: "Waitlist entry not found" }); return; }
       res.json({ success: true, data: await service.waitlistView(entry as never) });
     } catch (error) { forward(next, error); }
@@ -64,7 +66,7 @@ export function createCommunityProgramsRouter(dataSource: DataSource, authServic
     catch (error) { forward(next, error); }
   });
   admin.post("/waitlist/:wallet/approve", authenticate, authorizeAdmin, async (req: Request<{ wallet: string }>, res: Response, next) => {
-    try { res.json({ success: true, data: await service.approveWaitlist(req.params.wallet) }); }
+    try { res.json({ success: true, data: await service.approveWaitlist(String(req.params.wallet)) }); }
     catch (error) { forward(next, error); }
   });
   router.use("/admin", admin);

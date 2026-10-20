@@ -42,7 +42,7 @@ export function createOnchainEventViewsRouter(dataSource: DataSource): Router {
       const data = await byPayloadField(
         ["syndicate_created", "syndicate_joined", "syndicate_member_exited", "syndicate_executed"],
         "invoice_id",
-        req.params.invoiceId,
+        String(req.params.invoiceId),
         parseLimit(req),
       );
       res.json({ success: true, data });
@@ -52,7 +52,12 @@ export function createOnchainEventViewsRouter(dataSource: DataSource): Router {
   // #673 — risk alert events for one invoice.
   router.get("/invoices/:invoiceId/risk-status", async (req: Request, res: Response, next) => {
     try {
-      const data = await byPayloadField(["invoice_at_risk"], "invoice_id", req.params.invoiceId, parseLimit(req));
+      const data = await byPayloadField(
+        ["invoice_at_risk"],
+        "invoice_id",
+        String(req.params.invoiceId),
+        parseLimit(req)
+      );
       res.json({ success: true, data });
     } catch (error) { forward(next, error); }
   });
@@ -60,11 +65,17 @@ export function createOnchainEventViewsRouter(dataSource: DataSource): Router {
   // #674 — loyalty tier history for one wallet.
   router.get("/investors/:wallet/loyalty", async (req: Request, res: Response, next) => {
     try {
-      if (!isValidStellarPublicKey(req.params.wallet)) {
+      const wallet = String(req.params.wallet);
+      if (!isValidStellarPublicKey(wallet)) {
         res.status(400).json({ success: false, error: "Invalid wallet address" });
         return;
       }
-      const data = await byPayloadField(["loyalty_tier_upgraded"], "wallet", req.params.wallet, parseLimit(req));
+      const data = await byPayloadField(
+        ["loyalty_tier_upgraded"],
+        "wallet",
+        wallet,
+        parseLimit(req)
+      );
       res.json({ success: true, data, current: data.at(-1) ?? null });
     } catch (error) { forward(next, error); }
   });
@@ -75,7 +86,7 @@ export function createOnchainEventViewsRouter(dataSource: DataSource): Router {
       const data = await byPayloadField(
         ["pool_created", "pool_investment_executed"],
         "pool_id",
-        req.params.poolId,
+        String(req.params.poolId),
         parseLimit(req),
       );
       res.json({ success: true, data });

@@ -7,7 +7,7 @@ export class BenchmarkController {
   /** GET /api/v1/benchmarks/:sector */
   getSectorBenchmark = async (req: Request, res: Response) => {
     try {
-      const sector = req.params.sector;
+      const sector = String(req.params.sector);
       const benchmark = await this.benchmarkService.getSectorBenchmark(sector);
       return res.status(200).json({ success: true, data: benchmark });
     } catch (err: unknown) {
@@ -18,7 +18,9 @@ export class BenchmarkController {
   /** GET /api/v1/invoices/:invoiceId/benchmark */
   getInvoiceBenchmark = async (req: Request, res: Response) => {
     try {
-      const invoiceId = req.params.invoiceId ?? (req.params as Record<string, string>).invoice_id;
+      const invoiceId = String(
+        req.params.invoiceId ?? (req.params as Record<string, string>).invoice_id
+      );
       const comparison = await this.benchmarkService.getInvoiceBenchmark(invoiceId);
       return res.status(200).json({ success: true, data: comparison });
     } catch (err: unknown) {

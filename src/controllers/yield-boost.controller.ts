@@ -7,8 +7,10 @@ export class YieldBoostController {
   /** GET /api/v1/invoices/:invoiceId/boost/:wallet */
   getBoost = async (req: Request, res: Response) => {
     try {
-      const invoiceId = req.params.invoiceId ?? (req.params as Record<string, string>).invoice_id;
-      const wallet = req.params.wallet;
+      const invoiceId = String(
+        req.params.invoiceId ?? (req.params as Record<string, string>).invoice_id
+      );
+      const wallet = String(req.params.wallet);
       const boost = await this.yieldBoostService.getBoost(invoiceId, wallet);
       return res.status(200).json({ success: true, data: boost });
     } catch (err: unknown) {
