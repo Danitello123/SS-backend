@@ -55,6 +55,7 @@ export interface DecodedSorobanEvent {
   contractId: string;
   ledger: number;
   ledgerClosedAt: string;
+  occurredAt?: Date;
   txHash: string;
   topic: string;
   topics: unknown[];
