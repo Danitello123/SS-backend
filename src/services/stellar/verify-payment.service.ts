@@ -2,6 +2,7 @@ import { DataSource, Repository } from "typeorm";
 import type { PaymentVerificationConfig } from "../../config/stellar";
 import { Investment } from "../../models/Investment.model";
 import { Transaction } from "../../models/Transaction.model";
+import { StellarPaymentClaim } from "../../models/StellarPaymentClaim.model";
 import { InvestmentStatus, TransactionStatus, TransactionType } from "../../types/enums";
 import { ServiceError } from "../../utils/service-error";
 import type { AppLogger } from "../../observability/logger";
@@ -48,6 +49,7 @@ interface PaymentMatch {
   operationIndex: number;
   amount: string;
   destination: string;
+  sourceAccount: string;
   assetCode: string;
   assetIssuer: string;
 }
@@ -59,6 +61,7 @@ interface InvestmentReader {
 interface PaymentVerificationUnitOfWork {
   findInvestmentByIdForUpdate(investmentId: string): Promise<Investment | null>;
   findTransactionsByInvestmentIdForUpdate(investmentId: string): Promise<Transaction[]>;
+  claimPayment?(stellarTxHash: string, operationIndex: number, investmentId: string): Promise<void>;
   saveInvestment(investment: Investment): Promise<Investment>;
   saveTransaction(transaction: Transaction): Promise<Transaction>;
   createTransaction(input: Partial<Transaction>): Transaction;
@@ -138,122 +141,149 @@ export class VerifyPaymentService {
     const matchedPayment = await this.fetchAndValidatePayment(
       input.stellarTxHash,
       investment.investmentAmount,
+      investment.investorWallet ?? null,
       input.operationIndex
     );
 
-    return this.transactionRunner.runInTransaction(async (unitOfWork) => {
-      const lockedInvestment = await unitOfWork.findInvestmentByIdForUpdate(input.investmentId);
+    try {
+      return await this.transactionRunner.runInTransaction(async (unitOfWork) => {
+        const lockedInvestment = await unitOfWork.findInvestmentByIdForUpdate(input.investmentId);
 
-      if (!lockedInvestment) {
-        throw new ServiceError("investment_not_found", "Investment not found.", 404);
-      }
-
-      const linkedTransactions = await unitOfWork.findTransactionsByInvestmentIdForUpdate(
-        lockedInvestment.id
-      );
-
-      if (linkedTransactions.length > 1) {
-        throw new ServiceError(
-          "reconciliation_conflict",
-          "Multiple transaction rows are linked to the same investment.",
-          409
-        );
-      }
-
-      if (lockedInvestment.status === InvestmentStatus.CONFIRMED) {
-        const transaction = linkedTransactions[0];
-
-        if (
-          lockedInvestment.transactionHash === input.stellarTxHash &&
-          lockedInvestment.stellarOperationIndex === matchedPayment.operationIndex
-        ) {
-          return {
-            outcome: "already_verified" as const,
-            investmentId: lockedInvestment.id,
-            stellarTxHash: input.stellarTxHash,
-            operationIndex: matchedPayment.operationIndex,
-            transactionId: transaction?.id ?? "",
-            status: InvestmentStatus.CONFIRMED as const,
-          };
+        if (!lockedInvestment) {
+          throw new ServiceError("investment_not_found", "Investment not found.", 404);
         }
 
-        throw new ServiceError(
-          "reconciliation_conflict",
-          "Investment was confirmed by another transaction while verification was in progress.",
-          409
+        if (matchedPayment.sourceAccount !== lockedInvestment.investorWallet) {
+          throw new ServiceError(
+            "invalid_payment",
+            "The Stellar payment source account does not match the investment wallet.",
+            422
+          );
+        }
+
+        const linkedTransactions = await unitOfWork.findTransactionsByInvestmentIdForUpdate(
+          lockedInvestment.id
         );
-      }
 
-      const existingTransaction = linkedTransactions[0];
+        if (linkedTransactions.length > 1) {
+          throw new ServiceError(
+            "reconciliation_conflict",
+            "Multiple transaction rows are linked to the same investment.",
+            409
+          );
+        }
 
-      if (
-        existingTransaction &&
-        existingTransaction.stellarTxHash &&
-        existingTransaction.stellarTxHash !== input.stellarTxHash
-      ) {
-        throw new ServiceError(
-          "reconciliation_conflict",
-          "Transaction row is already linked to a different Stellar hash.",
-          409
+        if (lockedInvestment.status === InvestmentStatus.CONFIRMED) {
+          const transaction = linkedTransactions[0];
+
+          if (
+            lockedInvestment.transactionHash === input.stellarTxHash &&
+            lockedInvestment.stellarOperationIndex === matchedPayment.operationIndex
+          ) {
+            return {
+              outcome: "already_verified" as const,
+              investmentId: lockedInvestment.id,
+              stellarTxHash: input.stellarTxHash,
+              operationIndex: matchedPayment.operationIndex,
+              transactionId: transaction?.id ?? "",
+              status: InvestmentStatus.CONFIRMED as const,
+            };
+          }
+
+          throw new ServiceError(
+            "reconciliation_conflict",
+            "Investment was confirmed by another transaction while verification was in progress.",
+            409
+          );
+        }
+
+        const existingTransaction = linkedTransactions[0];
+
+        if (
+          existingTransaction &&
+          existingTransaction.stellarTxHash &&
+          existingTransaction.stellarTxHash !== input.stellarTxHash
+        ) {
+          throw new ServiceError(
+            "reconciliation_conflict",
+            "Transaction row is already linked to a different Stellar hash.",
+            409
+          );
+        }
+
+        const transaction =
+          existingTransaction ??
+          unitOfWork.createTransaction({
+            investmentId: lockedInvestment.id,
+
+            invoiceId: lockedInvestment.invoiceId,
+            userId: lockedInvestment.investorId,
+            type: TransactionType.INVESTMENT,
+            amount: lockedInvestment.investmentAmount,
+            status: TransactionStatus.PENDING,
+          });
+
+        await unitOfWork.claimPayment?.(
+          input.stellarTxHash,
+          matchedPayment.operationIndex,
+          lockedInvestment.id
         );
-      }
 
-      const transaction =
-        existingTransaction ??
-        unitOfWork.createTransaction({
-          investmentId: lockedInvestment.id,
+        transaction.userId = lockedInvestment.investorId;
 
-          invoiceId: lockedInvestment.invoiceId,
-          userId: lockedInvestment.investorId,
-          type: TransactionType.INVESTMENT,
+        transaction.invoiceId = lockedInvestment.invoiceId;
+
+        transaction.investmentId = lockedInvestment.id;
+        transaction.type = TransactionType.INVESTMENT;
+        transaction.amount = lockedInvestment.investmentAmount;
+        transaction.status = TransactionStatus.COMPLETED;
+        transaction.stellarTxHash = input.stellarTxHash;
+        transaction.stellarOperationIndex = matchedPayment.operationIndex;
+
+        lockedInvestment.status = InvestmentStatus.CONFIRMED;
+        lockedInvestment.transactionHash = input.stellarTxHash;
+        lockedInvestment.stellarOperationIndex = matchedPayment.operationIndex;
+
+        const savedTransaction = await unitOfWork.saveTransaction(transaction);
+        await unitOfWork.saveInvestment(lockedInvestment);
+
+        // Structured log for accepted funding
+        this.logger.info("Investment funding accepted.", {
+          event: "investment_funding_accepted",
+          investment_id: lockedInvestment.id,
+          invoice_id: lockedInvestment.invoiceId,
+          wallet_id: lockedInvestment.investorId,
+          transaction_id: savedTransaction.id,
+          stellar_tx_hash: input.stellarTxHash,
+          operation_index: matchedPayment.operationIndex,
           amount: lockedInvestment.investmentAmount,
-          status: TransactionStatus.PENDING,
         });
 
-      transaction.userId = lockedInvestment.investorId;
-
-      transaction.invoiceId = lockedInvestment.invoiceId;
-
-      transaction.investmentId = lockedInvestment.id;
-      transaction.type = TransactionType.INVESTMENT;
-      transaction.amount = lockedInvestment.investmentAmount;
-      transaction.status = TransactionStatus.COMPLETED;
-      transaction.stellarTxHash = input.stellarTxHash;
-      transaction.stellarOperationIndex = matchedPayment.operationIndex;
-
-      lockedInvestment.status = InvestmentStatus.CONFIRMED;
-      lockedInvestment.transactionHash = input.stellarTxHash;
-      lockedInvestment.stellarOperationIndex = matchedPayment.operationIndex;
-
-      const savedTransaction = await unitOfWork.saveTransaction(transaction);
-      await unitOfWork.saveInvestment(lockedInvestment);
-
-      // Structured log for accepted funding
-      this.logger.info("Investment funding accepted.", {
-        event: "investment_funding_accepted",
-        investment_id: lockedInvestment.id,
-        invoice_id: lockedInvestment.invoiceId,
-        wallet_id: lockedInvestment.investorId,
-        transaction_id: savedTransaction.id,
-        stellar_tx_hash: input.stellarTxHash,
-        operation_index: matchedPayment.operationIndex,
-        amount: lockedInvestment.investmentAmount,
+        return {
+          outcome: "verified" as const,
+          investmentId: lockedInvestment.id,
+          stellarTxHash: input.stellarTxHash,
+          operationIndex: matchedPayment.operationIndex,
+          transactionId: savedTransaction.id,
+          status: InvestmentStatus.CONFIRMED as const,
+        };
       });
-
-      return {
-        outcome: "verified" as const,
-        investmentId: lockedInvestment.id,
-        stellarTxHash: input.stellarTxHash,
-        operationIndex: matchedPayment.operationIndex,
-        transactionId: savedTransaction.id,
-        status: InvestmentStatus.CONFIRMED as const,
-      };
-    });
+    } catch (error) {
+      if (isDuplicateStellarPaymentError(error)) {
+        throw new ServiceError(
+          "stellar_payment_already_used",
+          "This Stellar payment operation has already been credited to another investment.",
+          409
+        );
+      }
+      throw error;
+    }
   }
 
   private async fetchAndValidatePayment(
     stellarTxHash: string,
     expectedAmount: string,
+    expectedSourceAccount: string | null,
     operationIndex?: number
   ): Promise<PaymentMatch> {
     const transaction = normalizeHorizonTransaction(
@@ -290,6 +320,8 @@ export class VerifyPaymentService {
         operation.assetCode === this.config.usdcAssetCode &&
         operation.assetIssuer === this.config.usdcAssetIssuer &&
         operation.destination === this.config.escrowPublicKey &&
+        expectedSourceAccount !== null &&
+        operation.sourceAccount === expectedSourceAccount &&
         operation.amount !== null &&
         amountsWithinDelta(operation.amount, expectedAmount, this.config.allowedAmountDelta)
       );
@@ -317,6 +349,7 @@ export class VerifyPaymentService {
       operationIndex: match.operationIndex,
       amount: match.amount ?? expectedAmount,
       destination: match.destination ?? "",
+      sourceAccount: match.sourceAccount ?? "",
       assetCode: match.assetCode ?? "",
       assetIssuer: match.assetIssuer ?? "",
     };
@@ -406,6 +439,38 @@ class TypeOrmTransactionRunner implements PaymentTransactionRunner {
           manager.getRepository(Transaction).find({
             where: { investmentId },
           }),
+        claimPayment: async (stellarTxHash, operationIndex, investmentId) => {
+          const repository = manager.getRepository(StellarPaymentClaim);
+          const normalizedHash = stellarTxHash.toUpperCase();
+          const existingClaim = await repository.findOne({
+            where: { stellarTxHash: normalizedHash, stellarOperationIndex: operationIndex },
+          });
+          if (existingClaim) {
+            if (existingClaim.investmentId === investmentId) return;
+            throw new ServiceError(
+              "stellar_payment_already_used",
+              "This Stellar payment operation has already been claimed.",
+              409
+            );
+          }
+          try {
+            await repository.insert({
+              stellarTxHash: normalizedHash,
+              stellarOperationIndex: operationIndex,
+              investmentId,
+              transactionId: null,
+            });
+          } catch (error) {
+            if (isUniqueConstraintError(error)) {
+              throw new ServiceError(
+                "stellar_payment_already_used",
+                "This Stellar payment operation has already been claimed.",
+                409
+              );
+            }
+            throw error;
+          }
+        },
         saveInvestment: (investment: Investment) =>
           manager.getRepository(Investment).save(investment),
         saveTransaction: (transaction: Transaction) =>
@@ -432,6 +497,28 @@ export class RetryableHorizonError extends Error {}
 
 function ensureTrailingSlash(value: string): string {
   return value.endsWith("/") ? value : `${value}/`;
+}
+
+function isDuplicateStellarPaymentError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const candidate = error as {
+    code?: unknown;
+    constraint?: unknown;
+    driverError?: { code?: unknown; constraint?: unknown };
+  };
+  const code = candidate.driverError?.code ?? candidate.code;
+  const constraint = candidate.driverError?.constraint ?? candidate.constraint;
+
+  return code === "23505" && constraint === "uq_stellar_payment_claims_hash_operation";
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { code?: unknown; driverError?: { code?: unknown } };
+  return (candidate.driverError?.code ?? candidate.code) === "23505";
 }
 
 function amountsWithinDelta(actual: string, expected: string, delta: string): boolean {

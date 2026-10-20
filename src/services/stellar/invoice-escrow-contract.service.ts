@@ -10,8 +10,10 @@ import {
   TransactionBuilder,
   BASE_FEE,
 } from "stellar-sdk";
+import type { DataSource } from "typeorm";
 import type { AppLogger } from "../../observability/logger";
 import { logger as globalLogger } from "../../observability/logger";
+import { PendingStellarTransaction } from "../../models/PendingStellarTransaction.model";
 import { ServiceError } from "../../utils/service-error";
 import type {
   CreateEscrowParams,
@@ -63,6 +65,7 @@ export interface InvoiceEscrowContractServiceDependencies {
   networkPassphrase?: string;
   platformSecretKey?: string;
   server?: SorobanRpc.Server;
+  dataSource?: DataSource;
   logger?: AppLogger;
   confirmationPollMs?: number;
   confirmationAttempts?: number;
@@ -101,21 +104,14 @@ export interface InvoiceEscrowContractServiceDependencies {
 
 function sanitizeString(value: unknown, fieldName: string): string {
   if (typeof value !== "string") {
-    throw new ServiceError(
-      "invalid_input",
-      `${fieldName} is required.`,
-      400,
-      { field: fieldName, receivedType: typeof value },
-    );
+    throw new ServiceError("invalid_input", `${fieldName} is required.`, 400, {
+      field: fieldName,
+      receivedType: typeof value,
+    });
   }
   const trimmed = value.trim();
   if (!trimmed) {
-    throw new ServiceError(
-      "invalid_input",
-      `${fieldName} is required.`,
-      400,
-      { field: fieldName },
-    );
+    throw new ServiceError("invalid_input", `${fieldName} is required.`, 400, { field: fieldName });
   }
   return trimmed;
 }
@@ -134,6 +130,7 @@ export class InvoiceEscrowContractService {
   private readonly contract: Contract;
   readonly contractId: string;
   private readonly rpcServer?: SorobanRpc.Server;
+  private readonly dataSource?: DataSource;
   private readonly networkPassphrase?: string;
   private readonly platformSecretKey?: string;
   private readonly logger: AppLogger;
@@ -154,6 +151,7 @@ export class InvoiceEscrowContractService {
       this.contractId = sanitizeString(dependenciesOrContractId, "contractId");
       this.contract = new Contract(this.contractId);
       this.logger = logger ?? globalLogger;
+      this.dataSource = undefined;
       this.confirmationPollMs = 1000;
       this.confirmationAttempts = 20;
       this.maxDueDateHorizonMs = MAX_DUE_DATE_HORIZON_MS;
@@ -167,6 +165,7 @@ export class InvoiceEscrowContractService {
       this.contract = new Contract(this.contractId);
       this.networkPassphrase = dependenciesOrContractId.networkPassphrase;
       this.platformSecretKey = dependenciesOrContractId.platformSecretKey;
+      this.dataSource = dependenciesOrContractId.dataSource;
       if (dependenciesOrContractId.server) {
         this.rpcServer = dependenciesOrContractId.server;
       } else if (dependenciesOrContractId.rpcUrl) {
@@ -180,12 +179,10 @@ export class InvoiceEscrowContractService {
       this.maxDueDateHorizonMs =
         dependenciesOrContractId.maxDueDateHorizonMs ?? MAX_DUE_DATE_HORIZON_MS;
       this.maxStroops = dependenciesOrContractId.maxStroops ?? MAX_STROOPS;
-      this.rpcRetryAttempts =
-        dependenciesOrContractId.rpcRetryAttempts ?? RPC_RETRY_ATTEMPTS;
+      this.rpcRetryAttempts = dependenciesOrContractId.rpcRetryAttempts ?? RPC_RETRY_ATTEMPTS;
       this.rpcRetryBaseDelayMs =
         dependenciesOrContractId.rpcRetryBaseDelayMs ?? RPC_RETRY_BASE_DELAY_MS;
-      this.strictDueDateValidation =
-        dependenciesOrContractId.strictDueDateValidation ?? false;
+      this.strictDueDateValidation = dependenciesOrContractId.strictDueDateValidation ?? false;
       this.now = dependenciesOrContractId.now ?? (() => Date.now());
     }
   }
@@ -217,28 +214,24 @@ export class InvoiceEscrowContractService {
       }
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      throw new ServiceError(
-        "invalid_input",
-        `Invalid ${fieldName}: ${reason}`,
-        400,
-        { field: fieldName, reason },
-      );
+      throw new ServiceError("invalid_input", `Invalid ${fieldName}: ${reason}`, 400, {
+        field: fieldName,
+        reason,
+      });
     }
 
     if (parsed <= 0n) {
-      throw new ServiceError(
-        "invalid_input",
-        `${fieldName} must be positive.`,
-        400,
-        { field: fieldName, value: parsed.toString() },
-      );
+      throw new ServiceError("invalid_input", `${fieldName} must be positive.`, 400, {
+        field: fieldName,
+        value: parsed.toString(),
+      });
     }
     if (parsed > this.maxStroops) {
       throw new ServiceError(
         "invalid_input",
         `${fieldName} exceeds the maximum allowed value (${this.maxStroops}).`,
         400,
-        { field: fieldName, value: parsed.toString(), max: this.maxStroops.toString() },
+        { field: fieldName, value: parsed.toString(), max: this.maxStroops.toString() }
       );
     }
     return parsed;
@@ -253,12 +246,9 @@ export class InvoiceEscrowContractService {
    */
   private parseDueDate(dueDateTimestamp: number): number {
     if (!Number.isFinite(dueDateTimestamp) || dueDateTimestamp <= 0) {
-      throw new ServiceError(
-        "invalid_input",
-        "dueDateTimestamp must be a positive number.",
-        400,
-        { received: dueDateTimestamp },
-      );
+      throw new ServiceError("invalid_input", "dueDateTimestamp must be a positive number.", 400, {
+        received: dueDateTimestamp,
+      });
     }
     if (!this.strictDueDateValidation) {
       return dueDateTimestamp;
@@ -266,12 +256,10 @@ export class InvoiceEscrowContractService {
     const dueMs = dueDateTimestamp * 1000;
     const nowMs = this.now();
     if (dueMs <= nowMs) {
-      throw new ServiceError(
-        "invalid_input",
-        "dueDateTimestamp must be in the future.",
-        400,
-        { dueDateTimestamp, nowSeconds: Math.floor(nowMs / 1000) },
-      );
+      throw new ServiceError("invalid_input", "dueDateTimestamp must be in the future.", 400, {
+        dueDateTimestamp,
+        nowSeconds: Math.floor(nowMs / 1000),
+      });
     }
     if (dueMs - nowMs > this.maxDueDateHorizonMs) {
       throw new ServiceError(
@@ -281,7 +269,7 @@ export class InvoiceEscrowContractService {
         {
           dueDateTimestamp,
           horizonSeconds: Math.floor(this.maxDueDateHorizonMs / 1000),
-        },
+        }
       );
     }
     return dueDateTimestamp;
@@ -378,13 +366,13 @@ export class InvoiceEscrowContractService {
       throw new ServiceError(
         "rpc_not_configured",
         "Soroban RPC server is not configured for simulation.",
-        503,
+        503
       );
     }
 
     const simResponse = await this.withRpcRetry(
       () => this.rpcServer!.simulateTransaction(transaction),
-      "simulateTransaction",
+      "simulateTransaction"
     );
 
     const successResponse = simResponse as unknown as {
@@ -422,13 +410,13 @@ export class InvoiceEscrowContractService {
       throw new ServiceError(
         "rpc_not_configured",
         "Soroban RPC server is not configured for submission.",
-        503,
+        503
       );
     }
 
     const response = await this.withRpcRetry(
       () => this.rpcServer!.sendTransaction(transaction),
-      "sendTransaction",
+      "sendTransaction"
     );
 
     return {
@@ -444,13 +432,13 @@ export class InvoiceEscrowContractService {
    * {@link withRpcRetry}; only `NOT_FOUND` is treated as "keep polling".
    */
   public async waitForTransactionConfirmation(
-    txHash: string,
+    txHash: string
   ): Promise<{ status: ConfirmationStatus; ledger: number | null }> {
     if (!this.rpcServer) {
       throw new ServiceError(
         "rpc_not_configured",
         "Soroban RPC server is not configured for transaction confirmation polling.",
-        503,
+        503
       );
     }
     const safeTxHash = sanitizeString(txHash, "txHash");
@@ -499,6 +487,9 @@ export class InvoiceEscrowContractService {
       sorobanContractId: this.contractId,
       attempts: this.confirmationAttempts,
     });
+
+    await this.recordPendingConfirmation(safeTxHash);
+
     throw new ServiceError(
       "transaction_confirmation_timeout",
       "Timed out waiting for transaction confirmation on-chain.",
@@ -508,8 +499,79 @@ export class InvoiceEscrowContractService {
         attempts: this.confirmationAttempts,
         pollMs: this.confirmationPollMs,
         lastLedger,
-      },
+      }
     );
+  }
+
+  public async getTransactionStatus(
+    txHash: string
+  ): Promise<{ status: ConfirmationStatus; ledger: number | null }> {
+    if (!this.rpcServer) {
+      throw new ServiceError(
+        "rpc_not_configured",
+        "Soroban RPC server is not configured for transaction confirmation polling.",
+        503
+      );
+    }
+
+    const result = await this.rpcServer.getTransaction(sanitizeString(txHash, "txHash"));
+    const status = this.extractStatus(result);
+    const ledger = status !== "NOT_FOUND" && "ledger" in result ? Number(result.ledger) : null;
+
+    return { status, ledger };
+  }
+
+  private async recordPendingConfirmation(txHash: string): Promise<void> {
+    if (!this.dataSource) {
+      this.logger.error(
+        "Cannot queue an unconfirmed Soroban transaction without database access.",
+        {
+          txHash,
+          sorobanContractId: this.contractId,
+        }
+      );
+      throw new ServiceError(
+        "pending_confirmation_persistence_unavailable",
+        "The transaction confirmation timed out, but pending state could not be persisted.",
+        503,
+        { txHash }
+      );
+    }
+
+    try {
+      await this.dataSource
+        .createQueryBuilder()
+        .insert()
+        .into(PendingStellarTransaction)
+        .values({
+          stellarTxHash: txHash,
+          contractId: this.contractId,
+          status: "PENDING_CONFIRMATION",
+          submittedAt: new Date(),
+          lastCheckedAt: null,
+          confirmedLedger: null,
+          failureReason: null,
+        })
+        .orIgnore()
+        .execute();
+
+      this.logger.warn("Queued Soroban transaction for background confirmation.", {
+        txHash,
+        sorobanContractId: this.contractId,
+      });
+    } catch (error) {
+      this.logger.error("Failed to persist pending Soroban transaction confirmation.", {
+        txHash,
+        sorobanContractId: this.contractId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw new ServiceError(
+        "pending_confirmation_persistence_failed",
+        "The transaction confirmation timed out and could not be queued for reconciliation.",
+        500,
+        { txHash }
+      );
+    }
   }
 
   /**
@@ -517,7 +579,7 @@ export class InvoiceEscrowContractService {
    * returned by different Soroban RPC versions.
    */
   private extractStatus(
-    result: Awaited<ReturnType<SorobanRpc.Server["getTransaction"]>>,
+    result: Awaited<ReturnType<SorobanRpc.Server["getTransaction"]>>
   ): ConfirmationStatus {
     const raw = (result as { status?: unknown }).status;
     if (raw === "SUCCESS") return "SUCCESS";
@@ -533,10 +595,7 @@ export class InvoiceEscrowContractService {
    * tion call failed." / "Soroban sendTransaction call failed.") so existing
    * log-based alerting keeps working.
    */
-  private async withRpcRetry<T>(
-    operation: () => Promise<T>,
-    operationName: string,
-  ): Promise<T> {
+  private async withRpcRetry<T>(operation: () => Promise<T>, operationName: string): Promise<T> {
     let lastError: unknown;
     const finalFailureMessage =
       operationName === "simulateTransaction"
@@ -572,7 +631,10 @@ export class InvoiceEscrowContractService {
           attemptsRemaining: this.rpcRetryAttempts - attempt,
           error: error instanceof Error ? error.message : String(error),
         });
-        const delay = jitter(this.rpcRetryBaseDelayMs * 2 ** (attempt - 1), RPC_RETRY_MAX_JITTER_MS);
+        const delay = jitter(
+          this.rpcRetryBaseDelayMs * 2 ** (attempt - 1),
+          RPC_RETRY_MAX_JITTER_MS
+        );
         await sleep(delay);
       }
     }
@@ -593,17 +655,22 @@ export class InvoiceEscrowContractService {
    * @returns The transaction hash and ledger of the confirmed settlement
    * @throws ServiceError if RPC is not configured, submission fails, or confirmation fails/times out
    */
-  public async settleEscrowOnChain(invoiceId: string): Promise<{ transactionHash: string; ledger: number | null }> {
+  public async settleEscrowOnChain(
+    invoiceId: string
+  ): Promise<{ transactionHash: string; ledger: number | null }> {
     if (!this.rpcServer || !this.networkPassphrase || !this.platformSecretKey) {
       throw new ServiceError(
         "rpc_not_configured",
         "Soroban RPC and signer configuration is incomplete for settlement",
-        503,
+        503
       );
     }
 
     const safeInvoiceId = sanitizeString(invoiceId, "invoiceId");
-    const operation = this.contract.call("settle_escrow", nativeToScVal(safeInvoiceId, { type: "symbol" }));
+    const operation = this.contract.call(
+      "settle_escrow",
+      nativeToScVal(safeInvoiceId, { type: "symbol" })
+    );
 
     const signer = Keypair.fromSecret(this.platformSecretKey);
     const account = await this.rpcServer.getAccount(signer.publicKey());
@@ -621,7 +688,7 @@ export class InvoiceEscrowContractService {
 
     const submitted = await this.withRpcRetry(
       () => this.rpcServer!.sendTransaction(prepared),
-      "sendTransaction",
+      "sendTransaction"
     );
 
     if (submitted.status === "ERROR") {
@@ -629,7 +696,7 @@ export class InvoiceEscrowContractService {
         "on_chain_settlement_failed",
         "On-chain settlement transaction rejected",
         502,
-        { errorResult: submitted.errorResult },
+        { errorResult: submitted.errorResult }
       );
     }
 
@@ -639,14 +706,14 @@ export class InvoiceEscrowContractService {
         "on_chain_settlement_failed",
         "On-chain settlement transaction failed",
         502,
-        { transactionHash: submitted.hash },
+        { transactionHash: submitted.hash }
       );
     }
     if (confirmation.status === "NOT_FOUND") {
       throw new ServiceError(
         "on_chain_settlement_timeout",
         "Timed out waiting for on-chain settlement confirmation",
-        504,
+        504
       );
     }
 
@@ -671,7 +738,7 @@ export class InvoiceEscrowContractService {
    * `sellerAddress`, `amountStroops`) is logged — no secret keys, signing
    * seeds, or auth tokens are ever written to logs.
    */
-public async createEscrowOnChain(input: CreateEscrowInput): Promise<CreateEscrowResult> {
+  public async createEscrowOnChain(input: CreateEscrowInput): Promise<CreateEscrowResult> {
     const amountBigInt = this.parseStroopAmount(input.amountStroops, "amountStroops");
     this.parseDueDate(input.dueDateTimestamp);
 
@@ -718,14 +785,16 @@ public async createEscrowOnChain(input: CreateEscrowInput): Promise<CreateEscrow
     );
   }
 
-  public async executeRegisterInvoice(
-    input: { invoiceId: string; sellerAddress: string; amountStroops: string | bigint | number }
-  ): Promise<{ transactionHash: string; ledger: number | null }> {
+  public async executeRegisterInvoice(input: {
+    invoiceId: string;
+    sellerAddress: string;
+    amountStroops: string | bigint | number;
+  }): Promise<{ transactionHash: string; ledger: number | null }> {
     if (!this.rpcServer || !this.networkPassphrase || !this.platformSecretKey) {
       throw new ServiceError(
         "rpc_not_configured",
         "Escrow contract RPC and signer configuration is incomplete.",
-        503,
+        503
       );
     }
 
@@ -733,11 +802,7 @@ public async createEscrowOnChain(input: CreateEscrowInput): Promise<CreateEscrow
     const safeSellerAddress = sanitizeString(input.sellerAddress, "sellerAddress");
     const amountBigInt = this.parseStroopAmount(input.amountStroops, "amountStroops");
 
-    const operation = this.buildRegisterInvoiceTx(
-      safeInvoiceId,
-      safeSellerAddress,
-      amountBigInt
-    );
+    const operation = this.buildRegisterInvoiceTx(safeInvoiceId, safeSellerAddress, amountBigInt);
 
     let account: Awaited<ReturnType<SorobanRpc.Server["getAccount"]>>;
     try {
@@ -753,7 +818,7 @@ public async createEscrowOnChain(input: CreateEscrowInput): Promise<CreateEscrow
         "soroban_account_fetch_failed",
         "Failed to fetch Soroban account for invoice registration.",
         502,
-        { invoiceId: safeInvoiceId },
+        { invoiceId: safeInvoiceId }
       );
     }
 
@@ -768,7 +833,7 @@ public async createEscrowOnChain(input: CreateEscrowInput): Promise<CreateEscrow
 
     let prepared: Transaction;
     try {
-      prepared = await this.rpcServer.prepareTransaction(transaction) as Transaction;
+      prepared = (await this.rpcServer.prepareTransaction(transaction)) as Transaction;
     } catch (error) {
       this.logger.error("Failed to prepare register_invoice transaction.", {
         sorobanContractId: this.contractId,
@@ -779,7 +844,7 @@ public async createEscrowOnChain(input: CreateEscrowInput): Promise<CreateEscrow
         "soroban_prepare_failed",
         "Failed to prepare the register_invoice transaction.",
         502,
-        { invoiceId: safeInvoiceId },
+        { invoiceId: safeInvoiceId }
       );
     }
 
@@ -796,7 +861,7 @@ public async createEscrowOnChain(input: CreateEscrowInput): Promise<CreateEscrow
         "soroban_register_invoice_rejected",
         "Failed to submit register_invoice transaction.",
         502,
-        { invoiceId: safeInvoiceId, errorResult: submitted.errorResult },
+        { invoiceId: safeInvoiceId, errorResult: submitted.errorResult }
       );
     }
 
@@ -812,7 +877,7 @@ public async createEscrowOnChain(input: CreateEscrowInput): Promise<CreateEscrow
         "soroban_register_invoice_failed",
         `register_invoice transaction failed on-chain: ${status}`,
         502,
-        { invoiceId: safeInvoiceId, transactionHash: submitted.txHash, status },
+        { invoiceId: safeInvoiceId, transactionHash: submitted.txHash, status }
       );
     }
 

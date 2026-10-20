@@ -9,6 +9,8 @@ import { SorobanIndexerCheckpoint } from "../../models/SorobanIndexerCheckpoint.
 import { InvestmentStatus, InvoiceStatus } from "../../types/enums";
 import type { DecodedSorobanEvent } from "../../types/soroban.types";
 import type { ContractEventBus } from "../contract-event-bus.service";
+import type { SettlementService } from "../settlement.service";
+import { scaledBigIntToDecimalString } from "../../lib/decimal-bigint";
 
 export interface EventIndexerServiceDependencies {
   contractIds: string[];
@@ -27,6 +29,7 @@ export interface EventIndexerServiceDependencies {
    * the previous behaviour exactly.
    */
   eventBus?: ContractEventBus;
+  settlementService?: SettlementService;
 }
 
 export interface PollEventsOptions {
@@ -46,6 +49,7 @@ export class EventIndexerService {
   private readonly investmentRepository?: Repository<Investment>;
   private readonly lagAlertThresholdLedgers: number;
   private readonly eventBus?: ContractEventBus;
+  private readonly settlementService?: SettlementService;
   private intervalHandle: NodeJS.Timeout | null = null;
   private lastIndexedLedger = 0;
   private latestLedgerSeen = 0;
@@ -62,6 +66,7 @@ export class EventIndexerService {
     this.dataSource = dependencies.dataSource;
     this.lagAlertThresholdLedgers = dependencies.lagAlertThresholdLedgers ?? 100;
     this.eventBus = dependencies.eventBus;
+    this.settlementService = dependencies.settlementService;
 
     if (dependencies.server) {
       this.rpcServer = dependencies.server;
@@ -344,22 +349,28 @@ export class EventIndexerService {
       invoiceId &&
       ["settle_escrow", "settle", "payment_recorded", "payment", "investment_settled"].includes(
         topic
-      ) &&
-      this.investmentRepository
+      )
     ) {
-      await this.investmentRepository.update(
-        { invoiceId, status: In([InvestmentStatus.PENDING, InvestmentStatus.CONFIRMED]) },
-        { status: InvestmentStatus.SETTLED }
-      );
-    }
+      if (!this.settlementService) {
+        throw new Error("SettlementService is required to process on-chain settlement events.");
+      }
 
-    if (
-      investment &&
-      ["settle_escrow", "settle", "investment_settled"].includes(topic) &&
-      investment.status !== InvestmentStatus.SETTLED
-    ) {
-      investment.status = InvestmentStatus.SETTLED;
-      await this.investmentRepository?.save(investment);
+      if (!this.invoiceRepository) {
+        throw new Error("InvoiceRepository is required to process on-chain settlement events.");
+      }
+      const invoice = await this.invoiceRepository.findOne({ where: { id: invoiceId } });
+      if (!invoice) {
+        throw new Error(`Invoice ${invoiceId} referenced by settlement event was not found.`);
+      }
+      if (invoice && invoice.status !== InvoiceStatus.SETTLED) {
+        await this.settlementService.settleInvoice({
+          invoiceId,
+          proceeds: this.extractSettlementProceeds(event),
+          actorWallet: "",
+          settlementTransactionHash: event.txHash,
+          trigger: "on_chain_settled",
+        });
+      }
     }
 
     // Event: "create_escrow"
@@ -385,30 +396,47 @@ export class EventIndexerService {
         }
       }
     }
+  }
 
-    // Event: "payment_recorded" or "payment"
-    if (topic === "payment_recorded" || topic === "payment") {
-      const invoiceId = this.extractInvoiceId(event);
-      if (invoiceId && this.invoiceRepository) {
-        const invoice = await this.invoiceRepository.findOne({ where: { id: invoiceId } });
-        if (invoice && invoice.status === InvoiceStatus.FUNDED) {
-          invoice.status = InvoiceStatus.SETTLED;
-          await this.invoiceRepository.save(invoice);
-        }
-      }
+  private extractSettlementProceeds(event: DecodedSorobanEvent): string {
+    const data =
+      event.data && typeof event.data === "object" && !Array.isArray(event.data)
+        ? (event.data as Record<string, unknown>)
+        : {};
+    const directProceeds =
+      data.proceeds ??
+      data.proceeds_amount ??
+      data.proceedsAmount ??
+      data.total_proceeds ??
+      data.totalSettlementAmount;
+    if (typeof directProceeds === "string" || typeof directProceeds === "number") {
+      return String(directProceeds);
+    }
+    if (typeof directProceeds === "bigint") {
+      return scaledBigIntToDecimalString(directProceeds / 1000n);
     }
 
-    // Event: "settle_escrow" or "settle"
-    if (topic === "settle_escrow" || topic === "settle") {
-      const invoiceId = this.extractInvoiceId(event);
-      if (invoiceId && this.invoiceRepository) {
-        const invoice = await this.invoiceRepository.findOne({ where: { id: invoiceId } });
-        if (invoice) {
-          invoice.status = InvoiceStatus.SETTLED;
-          await this.invoiceRepository.save(invoice);
-        }
+    const proceedsStroops =
+      data.proceeds_stroops ??
+      data.proceedsStroops ??
+      data.amount_stroops ??
+      data.amountStroops ??
+      data.amount;
+    if (
+      typeof proceedsStroops === "string" ||
+      typeof proceedsStroops === "number" ||
+      typeof proceedsStroops === "bigint"
+    ) {
+      const normalized = String(proceedsStroops);
+      if (!/^\d+$/.test(normalized)) {
+        throw new Error(`Settlement event ${event.id} contains invalid proceeds stroops.`);
       }
+      return scaledBigIntToDecimalString(BigInt(normalized) / 1000n);
     }
+
+    throw new Error(
+      `Settlement event ${event.id} does not include proceeds in decimal units or stroops.`
+    );
   }
 
   private async findInvestmentForEvent(event: DecodedSorobanEvent): Promise<Investment | null> {

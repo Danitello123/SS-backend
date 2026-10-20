@@ -43,6 +43,8 @@ export interface SettleInvoiceInput {
   invoiceId: string;
   proceeds: string;
   actorWallet: string;
+  /** Existing on-chain settlement transaction; prevents redistributing proceeds. */
+  settlementTransactionHash?: string;
   /** Recorded in the status history; defaults to `admin_settled`. */
   trigger?: InvoiceTransitionReason;
   sellerId?: string;
@@ -191,6 +193,7 @@ export class SettlementService {
       invoiceId,
       proceeds: proceedsInput,
       actorWallet,
+      settlementTransactionHash,
       sellerId,
       trigger = "admin_settled",
     } = input;
@@ -234,12 +237,20 @@ export class SettlementService {
             throw new ServiceError("FORBIDDEN", "Only the seller can settle this invoice", 403);
           }
 
-          if (actorWallet && invoice.sellerId && typeof transactionalEntityManager.findOne === "function") {
+          if (
+            actorWallet &&
+            invoice.sellerId &&
+            typeof transactionalEntityManager.findOne === "function"
+          ) {
             const seller = await transactionalEntityManager.findOne(User, {
               where: { id: invoice.sellerId },
             });
             if (seller && seller.stellarAddress && seller.stellarAddress !== actorWallet) {
-              throw new ServiceError("FORBIDDEN", "Only the invoice seller can settle this invoice", 403);
+              throw new ServiceError(
+                "FORBIDDEN",
+                "Only the invoice seller can settle this invoice",
+                403
+              );
             }
           }
 
@@ -283,9 +294,9 @@ export class SettlementService {
             : 0n;
           const distributableScaled = proceedsScaled - feeScaled;
           const settlements: InvestorSettlement[] = [];
-          let distributionTransactionHash: string | undefined;
+          let distributionTransactionHash = settlementTransactionHash;
 
-          if (this.paymentDistributor) {
+          if (this.paymentDistributor && !settlementTransactionHash) {
             if (!this.distributorConfig) {
               throw new ServiceError(
                 "DISTRIBUTOR_CONFIGURATION_MISSING",
@@ -308,6 +319,9 @@ export class SettlementService {
               })),
             });
             distributionTransactionHash = distribution.transactionHash;
+          }
+
+          if (distributionTransactionHash) {
             await transactionalEntityManager.save(
               Transaction,
               transactionalEntityManager.create(Transaction, {
@@ -316,8 +330,8 @@ export class SettlementService {
                 investmentId: null,
                 type: TransactionType.PAYMENT,
                 amount: proceeds.toFixed(4),
-                stellarTxHash: distribution.transactionHash,
-                stellarOperationIndex: 0,
+                stellarTxHash: distributionTransactionHash,
+                stellarOperationIndex: settlementTransactionHash ? null : 0,
                 status: TransactionStatus.COMPLETED,
               })
             );
@@ -381,7 +395,7 @@ export class SettlementService {
             entityManagerTransitionStore(transactionalEntityManager),
             invoice,
             InvoiceStatus.SETTLED,
-            { actor: { role: "system", wallet: actorWallet }, trigger }
+            { actor: { role: "system", wallet: actorWallet || null }, trigger }
           );
 
           const eventPayload: SettlementEventPayload = {
@@ -425,9 +439,13 @@ export class SettlementService {
       // Update issuer reputation after settlement
       if (this.issuerReputationService && result.sellerId) {
         try {
-          const user = await this.dataSource.getRepository(User).findOne({ where: { id: result.sellerId } });
+          const user = await this.dataSource
+            .getRepository(User)
+            .findOne({ where: { id: result.sellerId } });
           if (user?.stellarAddress) {
-            const invoice = await this.dataSource.getRepository(Invoice).findOne({ where: { id: result.invoiceId } });
+            const invoice = await this.dataSource
+              .getRepository(Invoice)
+              .findOne({ where: { id: result.invoiceId } });
             if (invoice) {
               const dueDate = new Date(invoice.dueDate);
               const settledDate = new Date();
@@ -449,7 +467,8 @@ export class SettlementService {
         } catch (reputationError) {
           logger.error("settlement.reputation_update_failed", {
             invoiceId: result.invoiceId,
-            error: reputationError instanceof Error ? reputationError.message : String(reputationError),
+            error:
+              reputationError instanceof Error ? reputationError.message : String(reputationError),
           });
           // Don't fail settlement if reputation update fails
         }
@@ -478,7 +497,10 @@ export class SettlementService {
         } catch (notificationError) {
           logger.error("settlement.notifications.failed", {
             invoiceId: result.invoiceId,
-            error: notificationError instanceof Error ? notificationError.message : String(notificationError),
+            error:
+              notificationError instanceof Error
+                ? notificationError.message
+                : String(notificationError),
           });
           // Don't fail the settlement if notifications fail
         }

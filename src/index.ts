@@ -53,6 +53,7 @@ import { getRedisClient } from "./config/redis";
 import { createIssuerReputationService } from "./services/issuer-reputation.service";
 import { createInvestorRiskProfileService } from "./services/investor-risk-profile.service";
 import { createInvoiceDraftService } from "./services/invoice-draft.service";
+import { PendingStellarConfirmationWorker } from "./workers/reconcile-pending-stellar-state.worker";
 
 export async function bootstrap(): Promise<{
   server: Server;
@@ -120,7 +121,7 @@ export async function bootstrap(): Promise<{
     distributor && sorobanConfig.platformFeeRecipient
       ? { feeRecipient: sorobanConfig.platformFeeRecipient, feeBps: sorobanConfig.platformFeeBps }
       : undefined;
-  
+
   const invoiceEscrowContract =
     sorobanConfig.escrowContractId && sorobanConfig.rpcUrl && sorobanConfig.platformSecretKey
       ? new InvoiceEscrowContractService(
@@ -128,6 +129,7 @@ export async function bootstrap(): Promise<{
             ...sorobanConfig,
             contractId: sorobanConfig.escrowContractId,
             networkPassphrase: sorobanConfig.networkPassphrase,
+            dataSource,
           },
           logger
         )
@@ -142,7 +144,7 @@ export async function bootstrap(): Promise<{
     notificationService,
     issuerReputationService
   );
-  
+
   const adminSettlementService =
     invoiceEscrowContract && notificationService
       ? createAdminSettlementService(
@@ -154,7 +156,12 @@ export async function bootstrap(): Promise<{
       : undefined;
 
   const marketplaceService = createMarketplaceService(dataSource);
-  const kycService = new KycService(dataSource, config.kyc.webhookSecret ?? "", logger, notificationService);
+  const kycService = new KycService(
+    dataSource,
+    config.kyc.webhookSecret ?? "",
+    logger,
+    notificationService
+  );
 
   // Keep process.env.TERMS_VERSION aligned with resolved config for services
   // that read the env directly (acknowledgement gate in InvestmentService).
@@ -201,6 +208,15 @@ export async function bootstrap(): Promise<{
 
   // ---- Feature: Settlement Worker ----
   const settlementWorker = createSettlementWorker(dataSource, settlementService);
+  const pendingStellarConfirmationWorker = invoiceEscrowContract
+    ? new PendingStellarConfirmationWorker(
+        dataSource,
+        invoiceEscrowContract,
+        logger,
+        config.reconciliation.intervalMs,
+        config.reconciliation.batchSize
+      )
+    : undefined;
 
   // ---- Feature: Fee Schedule Management (issue #592) ----
   const feeScheduleService = createFeeScheduleService(dataSource, getRedisClient());
@@ -271,12 +287,14 @@ export async function bootstrap(): Promise<{
           logger,
           lagAlertThresholdLedgers: config.sorobanIndexer.lagAlertThresholdLedgers,
           eventBus: projections.eventBus,
+          settlementService,
         })
       : undefined;
 
   if (eventIndexer) {
     eventIndexer.start(config.sorobanIndexer.intervalMs);
   }
+  pendingStellarConfirmationWorker?.start();
 
   server.on("close", () => {
     if (eventIndexer) {
@@ -285,6 +303,9 @@ export async function bootstrap(): Promise<{
     void maturityWorker.stop();
     snapshotScheduler.stop();
     settlementWorker.stop();
+    if (pendingStellarConfirmationWorker) {
+      void pendingStellarConfirmationWorker.stop();
+    }
   });
 
   return { server, settlementEvents };

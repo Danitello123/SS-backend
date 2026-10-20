@@ -19,6 +19,7 @@ export interface NormalizedHorizonPayment {
   type: string;
   amount: string | null;
   destination: string | null;
+  sourceAccount: string | null;
   assetCode: string | null;
   assetIssuer: string | null;
   memo: string | null;
@@ -65,6 +66,7 @@ export function normalizeHorizonPayment(value: unknown): NormalizedHorizonPaymen
     type: payment.type,
     amount: payment.amount,
     destination: payment.to,
+    sourceAccount: optionalString(payment.source_account ?? payment.sourceAccount),
     assetCode: optionalString(payment.asset_code ?? payment.assetCode),
     assetIssuer: optionalString(payment.asset_issuer ?? payment.assetIssuer),
     memo: optionalString(payment.memo),

@@ -8,10 +8,12 @@ import type {
 } from "../services/stellar/verify-payment.service";
 import { Investment } from "../models/Investment.model";
 import { Transaction } from "../models/Transaction.model";
+import { PendingStellarTransaction } from "../models/PendingStellarTransaction.model";
 import { InvestmentStatus, TransactionStatus, TransactionType } from "../types/enums";
 import { ServiceError } from "../utils/service-error";
 import { classifyReconciliationError } from "../services/stellar/reconciliation-retry";
 import type { AppLogger } from "../observability/logger";
+import type { ConfirmationStatus } from "../services/stellar/invoice-escrow-contract.service";
 
 type YieldControl = () => Promise<void>;
 type IntervalHandle = ReturnType<typeof setInterval>;
@@ -343,4 +345,109 @@ export function createReconcilePendingStellarStateWorker(
     config,
     logger,
   });
+}
+
+export interface PendingTransactionStatusReader {
+  getTransactionStatus(
+    txHash: string
+  ): Promise<{ status: ConfirmationStatus; ledger: number | null }>;
+}
+
+export class PendingStellarConfirmationWorker {
+  private readonly repository: Repository<PendingStellarTransaction>;
+  private readonly statusReader: PendingTransactionStatusReader;
+  private readonly logger: AppLogger;
+  private readonly intervalMs: number;
+  private readonly batchSize: number;
+  private intervalHandle: ReturnType<typeof setInterval> | null = null;
+  private inFlightTick: Promise<void> | null = null;
+
+  constructor(
+    dataSource: DataSource,
+    statusReader: PendingTransactionStatusReader,
+    logger: AppLogger,
+    intervalMs: number,
+    batchSize: number
+  ) {
+    this.repository = dataSource.getRepository(PendingStellarTransaction);
+    this.statusReader = statusReader;
+    this.logger = logger.child({ component: "pending-stellar-confirmation-worker" });
+    this.intervalMs = intervalMs;
+    this.batchSize = batchSize;
+  }
+
+  start(): void {
+    if (this.intervalHandle) return;
+    void this.scheduleTick();
+    this.intervalHandle = setInterval(() => void this.scheduleTick(), this.intervalMs);
+    this.logger.info("Started pending Soroban transaction confirmation worker.", {
+      intervalMs: this.intervalMs,
+      batchSize: this.batchSize,
+    });
+  }
+
+  async stop(): Promise<void> {
+    if (this.intervalHandle) {
+      clearInterval(this.intervalHandle);
+      this.intervalHandle = null;
+    }
+    if (this.inFlightTick) {
+      await this.inFlightTick;
+    }
+    this.logger.info("Stopped pending Soroban transaction confirmation worker.");
+  }
+
+  private async scheduleTick(): Promise<void> {
+    if (this.inFlightTick) return;
+    this.inFlightTick = this.runTick().finally(() => {
+      this.inFlightTick = null;
+    });
+    await this.inFlightTick;
+  }
+
+  private async runTick(): Promise<void> {
+    let pending: PendingStellarTransaction[];
+    try {
+      pending = await this.repository.find({
+        where: { status: "PENDING_CONFIRMATION" },
+        order: { createdAt: "ASC" },
+        take: this.batchSize,
+      });
+    } catch (error) {
+      this.logger.error("Failed to load pending Soroban transactions.", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+
+    for (const transaction of pending) {
+      try {
+        const confirmation = await this.statusReader.getTransactionStatus(
+          transaction.stellarTxHash
+        );
+        const update: Partial<PendingStellarTransaction> = {
+          lastCheckedAt: new Date(),
+        };
+
+        if (confirmation.status === "SUCCESS") {
+          update.status = "COMPLETED";
+          update.confirmedLedger =
+            confirmation.ledger === null ? null : String(confirmation.ledger);
+        } else if (confirmation.status === "FAILED") {
+          update.status = "FAILED";
+          update.failureReason = "Soroban RPC reported that the transaction failed.";
+        }
+
+        await this.repository.update(
+          { stellarTxHash: transaction.stellarTxHash, status: "PENDING_CONFIRMATION" },
+          update
+        );
+      } catch (error) {
+        this.logger.warn("Could not reconcile pending Soroban transaction.", {
+          txHash: transaction.stellarTxHash,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
 }
