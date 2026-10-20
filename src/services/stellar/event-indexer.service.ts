@@ -1,4 +1,4 @@
-import { SorobanRpc, scValToNative, xdr } from "stellar-sdk";
+import { rpc as SorobanRpc, scValToNative, xdr } from "@stellar/stellar-sdk";
 import { In, type DataSource, type Repository } from "typeorm";
 import type { AppLogger } from "../../observability/logger";
 import { logger as globalLogger } from "../../observability/logger";

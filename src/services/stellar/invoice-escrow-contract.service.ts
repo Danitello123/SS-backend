@@ -9,7 +9,7 @@ import {
   TransactionBuilder,
   BASE_FEE,
 } from "@stellar/stellar-sdk";
-import * as SorobanRpc from "@stellar/stellar-sdk/lib/esm/rpc";
+import { rpc as SorobanRpc } from "@stellar/stellar-sdk";
 import type { AppLogger } from "../../observability/logger";
 import { logger as globalLogger } from "../../observability/logger";
 import { ServiceError } from "../../utils/service-error";

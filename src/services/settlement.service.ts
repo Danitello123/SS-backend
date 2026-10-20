@@ -276,7 +276,7 @@ export class SettlementService {
           proceeds: proceeds.toFixed(4),
           actorWallet,
           sellerId,
-          trigger,
+          trigger: trigger === "system_matured" ? "maturity_settled" : trigger,
           feeRecipient: this.distributorConfig.feeRecipient,
           feeBps: this.distributorConfig.feeBps,
         });

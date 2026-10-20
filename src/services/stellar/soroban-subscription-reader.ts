@@ -6,7 +6,7 @@ import {
   xdr,
   scValToNative,
 } from "@stellar/stellar-sdk";
-import * as SorobanRpc from "@stellar/stellar-sdk/lib/esm/rpc";
+import { rpc as SorobanRpc } from "@stellar/stellar-sdk";
 
 import { logger as globalLogger } from "../../observability/logger";
 import type { AppLogger } from "../../observability/logger";

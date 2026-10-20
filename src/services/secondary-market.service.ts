@@ -3,6 +3,7 @@ import { Decimal } from "decimal.js";
 import { SecondaryListing } from "../models/SecondaryListing.model";
 import { Invoice } from "../models/Invoice.model";
 import { Investment } from "../models/Investment.model";
+import { SettlementIntent, SettlementIntentStatus } from "../models/SettlementIntent.model";
 import { ListingStatus, InvoiceStatus, InvestmentStatus, NotificationType } from "../types/enums";
 import { ServiceError } from "../utils/service-error";
 import { logger } from "../observability/logger";
@@ -339,7 +340,7 @@ export class SecondaryMarketService {
     let soldTotalPrice: string | undefined;
 
     const result = await this.dataSource.transaction(async (manager: EntityManager) => {
-      const { listingId, buyerWallet, quantity } = input;
+      const { listingId, buyerWallet, buyerId, quantity } = input;
 
       // Get listing
       const listing = await manager.findOne(SecondaryListing, {
