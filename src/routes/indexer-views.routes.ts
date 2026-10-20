@@ -26,7 +26,7 @@ export function createIndexerViewsRouter(dataSource: DataSource): Router {
     "/invoices/:invoice_id/rating",
     async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const summary = await ratingService.getInvoiceRating(req.params.invoice_id);
+        const summary = await ratingService.getInvoiceRating(String(req.params.invoice_id));
         res.json(summary);
       } catch (err) {
         next(err);
@@ -38,7 +38,7 @@ export function createIndexerViewsRouter(dataSource: DataSource): Router {
     "/issuers/:wallet/rating",
     async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const summary = await ratingService.getIssuerRating(req.params.wallet);
+        const summary = await ratingService.getIssuerRating(String(req.params.wallet));
         res.json(summary);
       } catch (err) {
         next(err);
@@ -52,7 +52,7 @@ export function createIndexerViewsRouter(dataSource: DataSource): Router {
     "/pools/:pool_id/rebalances/pending",
     async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const pending = await rebalanceService.getPending(req.params.pool_id);
+        const pending = await rebalanceService.getPending(String(req.params.pool_id));
         if (!pending) {
           res.status(404).json({ error: "No pending rebalance for this pool" });
           return;
@@ -70,7 +70,7 @@ export function createIndexerViewsRouter(dataSource: DataSource): Router {
       try {
         const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10) || 1);
         const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit ?? "20"), 10) || 20));
-        const history = await rebalanceService.getHistory(req.params.pool_id, page, limit);
+        const history = await rebalanceService.getHistory(String(req.params.pool_id), page, limit);
         res.json(history);
       } catch (err) {
         next(err);
@@ -86,7 +86,7 @@ export function createIndexerViewsRouter(dataSource: DataSource): Router {
       try {
         const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10) || 1);
         const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit ?? "20"), 10) || 20));
-        const result = await bulkService.getCancelledOrders(req.params.wallet, page, limit);
+        const result = await bulkService.getCancelledOrders(String(req.params.wallet), page, limit);
         res.json(result);
       } catch (err) {
         next(err);
