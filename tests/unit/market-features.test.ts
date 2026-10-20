@@ -41,7 +41,7 @@ describe("Market Features (#660, #661, #663, #664)", () => {
 
   describe("Issue #660: Investor Scoring API", () => {
     const app = express();
-    const mockAuthService = {} as AuthService;
+    const mockAuthService = { getCurrentUser: jest.fn() } as unknown as AuthService;
     const mockAcknowledgementService = {} as InvestorAcknowledgementService;
 
     app.use(
@@ -78,7 +78,12 @@ describe("Market Features (#660, #661, #663, #664)", () => {
     } as unknown as InvoiceService;
 
     const mockConfig = {
-      ipfs: { maxFileSizeMB: 10, allowedMimeTypes: ["application/pdf"] },
+      ipfs: {
+        maxFileSizeMB: 10,
+        allowedMimeTypes: ["application/pdf"],
+        uploadRateLimit: { windowMs: 60_000, maxUploads: 10 },
+      },
+      kyc: { skipVerification: true },
       cache: { enabled: false },
     } as any;
 
