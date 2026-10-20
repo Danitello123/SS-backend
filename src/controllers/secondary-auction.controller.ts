@@ -7,7 +7,9 @@ export class SecondaryAuctionController {
   /** GET /api/v1/auctions/:auctionId */
   getAuction = async (req: Request, res: Response) => {
     try {
-      const auctionId = req.params.auctionId ?? (req.params as Record<string, string>).auction_id;
+      const auctionId = String(
+        req.params.auctionId ?? (req.params as Record<string, string>).auction_id
+      );
       const auction = await this.secondaryAuctionService.getAuction(auctionId);
       return res.status(200).json({ success: true, data: auction });
     } catch (err: unknown) {
@@ -18,7 +20,9 @@ export class SecondaryAuctionController {
   /** GET /api/v1/auctions/:auctionId/bids */
   getBids = async (req: Request, res: Response) => {
     try {
-      const auctionId = req.params.auctionId ?? (req.params as Record<string, string>).auction_id;
+      const auctionId = String(
+        req.params.auctionId ?? (req.params as Record<string, string>).auction_id
+      );
       const page = Number(req.query.page ?? 1);
       const limit = Number(req.query.limit ?? 20);
       const bids = await this.secondaryAuctionService.getBids(auctionId, page, limit);
@@ -31,7 +35,9 @@ export class SecondaryAuctionController {
   /** GET /api/v1/invoices/:invoiceId/auctions */
   getInvoiceAuctions = async (req: Request, res: Response) => {
     try {
-      const invoiceId = req.params.invoiceId ?? (req.params as Record<string, string>).invoice_id;
+      const invoiceId = String(
+        req.params.invoiceId ?? (req.params as Record<string, string>).invoice_id
+      );
       const auctions = await this.secondaryAuctionService.getAuctionsForInvoice(invoiceId);
       return res.status(200).json({ success: true, data: auctions });
     } catch (err: unknown) {

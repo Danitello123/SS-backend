@@ -9,7 +9,7 @@ export class InvoiceExtensionController {
 
   getActiveProposal = async (req: Request, res: Response) => {
     try {
-      const { invoiceId } = req.params;
+      const invoiceId = String(req.params.invoiceId);
       const result = await this.extensionService.getActiveProposal(invoiceId);
       return res.status(200).json({ success: true, data: result });
     } catch (err: unknown) {
@@ -19,7 +19,8 @@ export class InvoiceExtensionController {
 
   getWalletVote = async (req: Request, res: Response) => {
     try {
-      const { invoiceId, wallet } = req.params;
+      const invoiceId = String(req.params.invoiceId);
+      const wallet = String(req.params.wallet);
       const result = await this.extensionService.getWalletVote(invoiceId, wallet);
       return res.status(200).json({ success: true, data: result });
     } catch (err: unknown) {
@@ -29,7 +30,7 @@ export class InvoiceExtensionController {
 
   getProposalHistory = async (req: Request, res: Response) => {
     try {
-      const { invoiceId } = req.params;
+      const invoiceId = String(req.params.invoiceId);
       const result = await this.extensionService.getProposalHistory(invoiceId);
       return res.status(200).json({ success: true, data: result });
     } catch (err: unknown) {

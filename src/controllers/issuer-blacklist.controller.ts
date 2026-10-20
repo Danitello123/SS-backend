@@ -9,7 +9,7 @@ export class IssuerBlacklistController {
 
   getBlacklistStatus = async (req: Request, res: Response) => {
     try {
-      const { wallet } = req.params;
+      const wallet = String(req.params.wallet);
       const result = await this.blacklistService.getBlacklistStatus(wallet);
       return res.status(200).json({ success: true, data: result });
     } catch (err: unknown) {

@@ -20,6 +20,22 @@ export interface BlacklistPage {
   pageSize: number;
 }
 
+interface BlacklistStatusRow {
+  is_blacklisted: boolean;
+  reason: string | null;
+  blacklisted_at: number | null;
+}
+
+interface BlacklistedIssuerRow {
+  wallet: string;
+  reason: string;
+  blacklisted_at: number;
+}
+
+interface BlacklistCountRow {
+  total: number | string;
+}
+
 /**
  * #685 — Issuer blacklist indexer and status REST API.
  * Indexes IssuerBlacklisted and IssuerRestored events.
@@ -33,14 +49,14 @@ export class IssuerBlacklistService {
 
   async getBlacklistStatus(wallet: string): Promise<BlacklistStatus> {
     const cacheKey = `status:${wallet}`;
-    const cached = this.cache.get<BlacklistStatus>(cacheKey);
+    const cached = await this.cache.get<BlacklistStatus>(cacheKey);
     if (cached) return cached;
 
-    const rows = await this.dataSource.query(
+    const rows = (await this.dataSource.query(
       `SELECT is_blacklisted, reason, blacklisted_at
        FROM issuer_blacklist WHERE wallet = $1`,
       [wallet],
-    );
+    )) as BlacklistStatusRow[];
 
     let status: BlacklistStatus;
     if (rows.length && rows[0].is_blacklisted) {
@@ -53,13 +69,13 @@ export class IssuerBlacklistService {
       status = { isBlacklisted: false, reason: null, blacklistedAt: null };
     }
 
-    this.cache.set(cacheKey, status);
+    await this.cache.set(cacheKey, status);
     return status;
   }
 
   async getBlacklistedIssuers(page: number = 1, pageSize: number = 20): Promise<BlacklistPage> {
     const cacheKey = `list:${page}:${pageSize}`;
-    const cached = this.cache.get<BlacklistPage>(cacheKey);
+    const cached = await this.cache.get<BlacklistPage>(cacheKey);
     if (cached) return cached;
 
     const offset = (page - 1) * pageSize;
@@ -73,27 +89,26 @@ export class IssuerBlacklistService {
       this.dataSource.query(
         `SELECT COUNT(*) as total FROM issuer_blacklist WHERE is_blacklisted = true`,
       ),
-    ]);
+    ]) as [BlacklistedIssuerRow[], BlacklistCountRow[]];
 
     const result: BlacklistPage = {
-      issuers: rows.map((r: any) => ({
-        wallet: r.wallet,
-        reason: r.reason,
-        blacklistedAt: r.blacklisted_at,
+      issuers: rows.map((row) => ({
+        wallet: row.wallet,
+        reason: row.reason,
+        blacklistedAt: row.blacklisted_at,
       })),
-      total: parseInt(countResult[0].total, 10),
+      total: parseInt(String(countResult[0].total), 10),
       page,
       pageSize,
     };
 
-    this.cache.set(cacheKey, result);
+    await this.cache.set(cacheKey, result);
     return result;
   }
 
   /** Invalidate cache for a wallet when a blacklist event occurs. */
-  invalidate(wallet: string): void {
-    this.cache.delete(`status:${wallet}`);
-    // Clear list cache entries
-    this.cache.clearNamespace("issuer-blacklist");
+  async invalidate(wallet: string): Promise<void> {
+    await this.cache.delete(`status:${wallet}`);
+    this.cache.invalidatePrefix("list:");
   }
 }

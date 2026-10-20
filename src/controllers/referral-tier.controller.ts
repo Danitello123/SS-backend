@@ -7,7 +7,7 @@ export class ReferralTierController {
   /** GET /api/v1/referrals/:wallet/tier */
   getTier = async (req: Request, res: Response) => {
     try {
-      const wallet = req.params.wallet;
+      const wallet = String(req.params.wallet);
       const tier = await this.referralTierService.getTier(wallet);
       return res.status(200).json({ success: true, data: tier });
     } catch (err: unknown) {
@@ -18,7 +18,7 @@ export class ReferralTierController {
   /** GET /api/v1/referrals/:wallet/tier/history */
   getTierHistory = async (req: Request, res: Response) => {
     try {
-      const wallet = req.params.wallet;
+      const wallet = String(req.params.wallet);
       const page = Number(req.query.page ?? 1);
       const limit = Number(req.query.limit ?? 20);
       const history = await this.referralTierService.getTierHistory(wallet, page, limit);

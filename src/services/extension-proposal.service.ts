@@ -21,6 +21,26 @@ export interface ExtensionVote {
   votedAt: number;
 }
 
+interface ExtensionProposalRow {
+  id: string;
+  invoice_id: string;
+  proposed_by: string;
+  new_deadline: number;
+  status: string;
+  votes_for: number;
+  votes_against: number;
+  quorum_bps: number;
+  eta: number;
+  created_at: number;
+}
+
+interface ExtensionVoteRow {
+  wallet: string;
+  vote: "for" | "against";
+  weight: string;
+  voted_at: number;
+}
+
 /**
  * #681 — Invoice extension proposal indexer and vote tracking REST API.
  * Indexes ExtensionProposed, ExtensionVoteCast, and ExtensionExecuted events.
@@ -34,35 +54,35 @@ export class ExtensionProposalService {
 
   async getActiveProposal(invoiceId: string): Promise<ExtensionProposal | null> {
     const cacheKey = `active:${invoiceId}`;
-    const cached = this.cache.get<ExtensionProposal>(cacheKey);
+    const cached = await this.cache.get<ExtensionProposal>(cacheKey);
     if (cached) return cached;
 
-    const rows = await this.dataSource.query(
+    const rows = (await this.dataSource.query(
       `SELECT id, invoice_id, proposed_by, new_deadline, status,
               votes_for, votes_against, quorum_bps, eta, created_at
        FROM extension_proposals
        WHERE invoice_id = $1 AND status = 'active'
        ORDER BY created_at DESC LIMIT 1`,
       [invoiceId],
-    );
+    )) as ExtensionProposalRow[];
 
     if (!rows.length) return null;
 
     const proposal = this.mapProposal(rows[0]);
-    this.cache.set(cacheKey, proposal);
+    await this.cache.set(cacheKey, proposal);
     return proposal;
   }
 
   async getWalletVote(invoiceId: string, wallet: string): Promise<ExtensionVote | null> {
     const cacheKey = `vote:${invoiceId}:${wallet}`;
-    const cached = this.cache.get<ExtensionVote>(cacheKey);
+    const cached = await this.cache.get<ExtensionVote>(cacheKey);
     if (cached) return cached;
 
-    const rows = await this.dataSource.query(
+    const rows = (await this.dataSource.query(
       `SELECT wallet, vote, weight, voted_at
        FROM extension_votes WHERE invoice_id = $1 AND wallet = $2`,
       [invoiceId, wallet],
-    );
+    )) as ExtensionVoteRow[];
 
     if (!rows.length) return null;
 
@@ -73,48 +93,50 @@ export class ExtensionProposalService {
       votedAt: rows[0].voted_at,
     };
 
-    this.cache.set(cacheKey, vote);
+    await this.cache.set(cacheKey, vote);
     return vote;
   }
 
   async getProposalHistory(invoiceId: string): Promise<ExtensionProposal[]> {
     const cacheKey = `history:${invoiceId}`;
-    const cached = this.cache.get<ExtensionProposal[]>(cacheKey);
+    const cached = await this.cache.get<ExtensionProposal[]>(cacheKey);
     if (cached) return cached;
 
-    const rows = await this.dataSource.query(
+    const rows = (await this.dataSource.query(
       `SELECT id, invoice_id, proposed_by, new_deadline, status,
               votes_for, votes_against, quorum_bps, eta, created_at
        FROM extension_proposals
        WHERE invoice_id = $1 AND status IN ('completed', 'rejected')
        ORDER BY created_at DESC`,
       [invoiceId],
-    );
+    )) as ExtensionProposalRow[];
 
-    const proposals = rows.map((r: any) => this.mapProposal(r));
-    this.cache.set(cacheKey, proposals);
+    const proposals = rows.map((row) => this.mapProposal(row));
+    await this.cache.set(cacheKey, proposals);
     return proposals;
   }
 
-  private mapProposal(r: any): ExtensionProposal {
+  private mapProposal(row: ExtensionProposalRow): ExtensionProposal {
     return {
-      id: r.id,
-      invoiceId: r.invoice_id,
-      proposedBy: r.proposed_by,
-      newDeadline: r.new_deadline,
-      status: r.status,
-      votesFor: r.votes_for,
-      votesAgainst: r.votes_against,
-      quorumBps: r.quorum_bps,
-      eta: r.eta,
-      createdAt: r.created_at,
+      id: row.id,
+      invoiceId: row.invoice_id,
+      proposedBy: row.proposed_by,
+      newDeadline: row.new_deadline,
+      status: row.status,
+      votesFor: row.votes_for,
+      votesAgainst: row.votes_against,
+      quorumBps: row.quorum_bps,
+      eta: row.eta,
+      createdAt: row.created_at,
     };
   }
 
   /** Invalidate cache for an invoice when an extension event occurs. */
-  invalidate(invoiceId: string): void {
-    this.cache.delete(`active:${invoiceId}`);
-    this.cache.delete(`history:${invoiceId}`);
-    this.cache.clearNamespace("extension-proposal");
+  async invalidate(invoiceId: string): Promise<void> {
+    await Promise.all([
+      this.cache.delete(`active:${invoiceId}`),
+      this.cache.delete(`history:${invoiceId}`),
+    ]);
+    this.cache.invalidatePrefix(`vote:${invoiceId}:`);
   }
 }
