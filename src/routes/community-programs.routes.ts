@@ -49,7 +49,7 @@ export function createCommunityProgramsRouter(dataSource: DataSource, authServic
   });
 
   router.post("/invoices/:id/reports", authenticate, async (req: AuthenticatedRequest, res: Response, next) => {
-    try { res.status(201).json({ success: true, data: await service.createFraudReport({ invoiceId: req.params.id, wallet: String(req.user?.stellarAddress ?? ""), reason: String(req.body?.reason ?? ""), detail: String(req.body?.detail ?? "") }) }); }
+    try { res.status(201).json({ success: true, data: await service.createFraudReport({ invoiceId: String(req.params.id), wallet: String(req.user?.stellarAddress ?? ""), reason: String(req.body?.reason ?? ""), detail: String(req.body?.detail ?? "") }) }); }
     catch (error) { forward(next, error); }
   });
 

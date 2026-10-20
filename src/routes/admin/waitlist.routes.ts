@@ -1,19 +1,10 @@
 import { Router, Request, Response, NextFunction } from "express";
-import { DataSource } from "typeorm";
 import { logger } from "../../observability/logger";
 import type { WaitlistService } from "../../services/waitlist.service";
 import { AppError } from "../../utils/http-error";
-import type { AuthService } from "../../services/auth.service";
-
-interface AuthenticatedRequest extends Request {
-  user?: { wallet: string };
-}
 
 export function createWaitlistRouter(
-  dataSource: DataSource,
   waitlistService: WaitlistService,
-  authService: AuthService,
-  notificationService?: unknown
 ) {
   const router = Router();
 
@@ -39,7 +30,7 @@ export function createWaitlistRouter(
 
   router.post(
     "/:wallet/approve",
-    async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    async (req: Request<{ wallet: string }>, res: Response, next: NextFunction) => {
       try {
         const { wallet } = req.params;
 
@@ -67,7 +58,7 @@ export function createWaitlistRouter(
 
   router.post(
     "/bulk-approve",
-    async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    async (req: Request, res: Response, next: NextFunction) => {
       try {
         const { count } = req.body;
 

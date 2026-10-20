@@ -312,7 +312,7 @@ export class SecondaryMarketService {
     let soldTotalPrice: string | undefined;
 
     const result = await this.dataSource.transaction(async (manager: EntityManager) => {
-      const { listingId, buyerWallet, quantity } = input;
+      const { listingId, buyerWallet, buyerId, quantity } = input;
 
       // Get listing
       const listing = await manager.findOne(SecondaryListing, {
