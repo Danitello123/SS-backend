@@ -20,6 +20,21 @@ export interface ContractDetail extends ContractEntry {
   versionHistory: ContractVersionHistory[];
 }
 
+interface ContractRegistryRow {
+  name: string;
+  version: string;
+  address: string;
+  last_upgraded: number;
+  registered_at: number;
+}
+
+interface ContractVersionHistoryRow {
+  version: string;
+  address: string;
+  upgraded_at: number;
+  upgraded_by: string;
+}
+
 /**
  * #682 — Platform upgrade registry REST API for contract version tracking.
  * Indexes ContractRegistered and ContractUpgraded events.
@@ -33,50 +48,50 @@ export class ContractRegistryService {
 
   async getAllContracts(): Promise<ContractEntry[]> {
     const cacheKey = "all";
-    const cached = this.cache.get<ContractEntry[]>(cacheKey);
+    const cached = await this.cache.get<ContractEntry[]>(cacheKey);
     if (cached) return cached;
 
-    const rows = await this.dataSource.query(
+    const rows = (await this.dataSource.query(
       `SELECT name, version, address, last_upgraded, registered_at
        FROM contract_registry ORDER BY name`,
-    );
+    )) as ContractRegistryRow[];
 
-    const contracts = rows.map((r: any) => this.mapEntry(r));
-    this.cache.set(cacheKey, contracts);
+    const contracts = rows.map((row) => this.mapEntry(row));
+    await this.cache.set(cacheKey, contracts);
     return contracts;
   }
 
   async getContractDetail(name: string): Promise<ContractDetail | null> {
     const cacheKey = `detail:${name}`;
-    const cached = this.cache.get<ContractDetail>(cacheKey);
+    const cached = await this.cache.get<ContractDetail>(cacheKey);
     if (cached) return cached;
 
-    const rows = await this.dataSource.query(
+    const rows = (await this.dataSource.query(
       `SELECT name, version, address, last_upgraded, registered_at
        FROM contract_registry WHERE name = $1`,
       [name],
-    );
+    )) as ContractRegistryRow[];
 
     if (!rows.length) return null;
 
-    const historyRows = await this.dataSource.query(
+    const historyRows = (await this.dataSource.query(
       `SELECT version, address, upgraded_at, upgraded_by
        FROM contract_version_history WHERE contract_name = $1
        ORDER BY upgraded_at DESC`,
       [name],
-    );
+    )) as ContractVersionHistoryRow[];
 
     const detail: ContractDetail = {
       ...this.mapEntry(rows[0]),
-      versionHistory: historyRows.map((r: any) => ({
-        version: r.version,
-        address: r.address,
-        upgradedAt: r.upgraded_at,
-        upgradedBy: r.upgraded_by,
+      versionHistory: historyRows.map((row) => ({
+        version: row.version,
+        address: row.address,
+        upgradedAt: row.upgraded_at,
+        upgradedBy: row.upgraded_by,
       })),
     };
 
-    this.cache.set(cacheKey, detail);
+    await this.cache.set(cacheKey, detail);
     return detail;
   }
 
@@ -88,13 +103,13 @@ export class ContractRegistryService {
     return { compatible, currentVersion: detail.version };
   }
 
-  private mapEntry(r: any): ContractEntry {
+  private mapEntry(row: ContractRegistryRow): ContractEntry {
     return {
-      name: r.name,
-      version: r.version,
-      address: r.address,
-      lastUpgraded: r.last_upgraded,
-      registeredAt: r.registered_at,
+      name: row.name,
+      version: row.version,
+      address: row.address,
+      lastUpgraded: row.last_upgraded,
+      registeredAt: row.registered_at,
     };
   }
 
@@ -111,6 +126,6 @@ export class ContractRegistryService {
 
   /** Invalidate cache when a registry event occurs. */
   invalidate(): void {
-    this.cache.clearNamespace("contract-registry");
+    this.cache.clear();
   }
 }

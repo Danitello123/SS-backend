@@ -21,10 +21,10 @@ function createFakeDataSource(
           save: async (row: ReferralTier) => {
             const idx = tierRows.findIndex((t) => t.wallet === row.wallet);
             const full = {
-              id: row.id ?? `tier-${tierRows.length + 1}`,
-              lastEventId: null,
-              createdAt: new Date(),
               ...row,
+              id: row.id ?? `tier-${tierRows.length + 1}`,
+              lastEventId: row.lastEventId ?? null,
+              createdAt: row.createdAt ?? new Date(),
             } as ReferralTier;
             if (idx >= 0) tierRows[idx] = full;
             else tierRows.push(full);
@@ -37,9 +37,9 @@ function createFakeDataSource(
           create: (data: Partial<ReferralTierHistory>) => ({ ...data }) as ReferralTierHistory,
           save: async (row: ReferralTierHistory) => {
             const full = {
-              id: `hist-${historyRows.length + 1}`,
-              createdAt: new Date(),
               ...row,
+              id: row.id ?? `hist-${historyRows.length + 1}`,
+              createdAt: row.createdAt ?? new Date(),
             } as ReferralTierHistory;
             historyRows.push(full);
             return full;

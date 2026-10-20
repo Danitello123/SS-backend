@@ -41,10 +41,10 @@ function createFakeDataSource(boosts: YieldBoost[] = [], invoices: Invoice[] = [
               (b) => b.invoiceId === row.invoiceId && b.wallet === row.wallet,
             );
             const full = {
-              id: row.id ?? `boost-${rows.length + 1}`,
-              lastEventId: null,
-              createdAt: new Date(),
               ...row,
+              id: row.id ?? `boost-${rows.length + 1}`,
+              lastEventId: row.lastEventId ?? null,
+              createdAt: row.createdAt ?? new Date(),
             } as YieldBoost;
             if (idx >= 0) rows[idx] = full;
             else rows.push(full);

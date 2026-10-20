@@ -9,7 +9,8 @@ export class InsuranceController {
 
   getInvoiceInsurance = async (req: Request, res: Response) => {
     try {
-      const { invoiceId, wallet } = req.params;
+      const invoiceId = String(req.params.invoiceId);
+      const wallet = String(req.params.wallet);
       const result = await this.insuranceService.getInvoiceInsurance(invoiceId, wallet);
       if (!result) {
         return res.status(404).json({ error: { code: "NOT_FOUND", message: "Insurance policy not found" } });
@@ -22,7 +23,7 @@ export class InsuranceController {
 
   getWalletPolicies = async (req: Request, res: Response) => {
     try {
-      const { wallet } = req.params;
+      const wallet = String(req.params.wallet);
       const result = await this.insuranceService.getWalletActivePolicies(wallet);
       return res.status(200).json({ success: true, data: result });
     } catch (err: unknown) {
@@ -32,7 +33,7 @@ export class InsuranceController {
 
   getWalletPayoutHistory = async (req: Request, res: Response) => {
     try {
-      const { wallet } = req.params;
+      const wallet = String(req.params.wallet);
       const result = await this.insuranceService.getWalletPayoutHistory(wallet);
       return res.status(200).json({ success: true, data: result });
     } catch (err: unknown) {

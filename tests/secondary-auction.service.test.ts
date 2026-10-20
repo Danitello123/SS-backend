@@ -23,13 +23,13 @@ function createFakeDataSource(
           save: async (row: SecondaryAuction) => {
             const idx = auctionRows.findIndex((a) => a.auctionId === row.auctionId);
             const full = {
-              id: row.id ?? `auc-${auctionRows.length + 1}`,
-              bidCount: 0,
-              highestBid: "0.0000",
-              highestBidder: null,
-              createdAt: new Date(),
-              updatedAt: new Date(),
               ...row,
+              id: row.id ?? `auc-${auctionRows.length + 1}`,
+              bidCount: row.bidCount ?? 0,
+              highestBid: row.highestBid ?? "0.0000",
+              highestBidder: row.highestBidder ?? null,
+              createdAt: row.createdAt ?? new Date(),
+              updatedAt: row.updatedAt ?? new Date(),
             } as SecondaryAuction;
             if (idx >= 0) auctionRows[idx] = full;
             else auctionRows.push(full);
@@ -42,9 +42,9 @@ function createFakeDataSource(
           create: (data: Partial<SecondaryBid>) => ({ ...data }) as SecondaryBid,
           save: async (row: SecondaryBid) => {
             const full = {
-              id: `bid-${bidRows.length + 1}`,
-              createdAt: new Date(),
               ...row,
+              id: row.id ?? `bid-${bidRows.length + 1}`,
+              createdAt: row.createdAt ?? new Date(),
             } as SecondaryBid;
             bidRows.push(full);
             return full;
