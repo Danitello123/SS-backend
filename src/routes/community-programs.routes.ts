@@ -55,16 +55,18 @@ export function createCommunityProgramsRouter(dataSource: DataSource, authServic
   });
 
   const admin = Router();
-  admin.use(authenticate, requireAdmin((process.env.ADMIN_WALLETS ?? "").split(",").map((wallet) => wallet.trim()).filter(Boolean)));
-  admin.get("/reports", async (req: Request, res: Response, next) => {
+  const authorizeAdmin = requireAdmin(
+    (process.env.ADMIN_WALLETS ?? "").split(",").map((wallet) => wallet.trim()).filter(Boolean)
+  );
+  admin.get("/reports", authenticate, authorizeAdmin, async (req: Request, res: Response, next) => {
     try { const page = Math.max(1, Number(req.query.page) || 1); const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 25)); const [items, total] = await service.listFraudReports(page, pageSize); res.json({ success: true, data: items, pagination: { page, pageSize, total } }); }
     catch (error) { forward(next, error); }
   });
-  admin.patch("/reports/:id", async (req: Request<{ id: string }>, res: Response, next) => {
+  admin.patch("/reports/:id", authenticate, authorizeAdmin, async (req: Request<{ id: string }>, res: Response, next) => {
     try { res.json({ success: true, data: await service.reviewFraudReport(req.params.id, String(req.body?.status) as FraudReportStatus, req.body?.reviewNote) }); }
     catch (error) { forward(next, error); }
   });
-  admin.post("/waitlist/:wallet/approve", async (req: Request<{ wallet: string }>, res: Response, next) => {
+  admin.post("/waitlist/:wallet/approve", authenticate, authorizeAdmin, async (req: Request<{ wallet: string }>, res: Response, next) => {
     try { res.json({ success: true, data: await service.approveWaitlist(req.params.wallet) }); }
     catch (error) { forward(next, error); }
   });
