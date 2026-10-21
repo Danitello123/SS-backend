@@ -16,7 +16,7 @@ interface AdminTokenPayload {
 export function authenticateAdminJWT(req: Request, _res: Response, next: NextFunction): void {
   const authHeader = req.headers.authorization;
 
-  if (!authHeader?.startsWith("Bearer ")) {
+  if (!authHeader || !/^bearer\s+/i.test(authHeader)) {
     next(
       new HttpError(
         401,
@@ -27,7 +27,7 @@ export function authenticateAdminJWT(req: Request, _res: Response, next: NextFun
     return;
   }
 
-  const token = authHeader.slice(7);
+  const token = authHeader.replace(/^bearer\s+/i, "");
 
   try {
     const secret = process.env.ADMIN_JWT_SECRET ?? process.env.JWT_SECRET;
