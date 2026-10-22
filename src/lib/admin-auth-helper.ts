@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import type { Request } from "express";
+import type { IncomingHttpHeaders } from "http";
 import type { AuthenticatedRequest } from "@/types/auth";
 
 /**
@@ -13,7 +13,7 @@ export function isTimingSafeEqual(a: string, b: string): boolean {
 /**
  * Validates admin authentication via either valid admin JWT or x-admin-key (#607, #608).
  */
-export function isValidAdminAuth(req: Request): boolean {
+export function isValidAdminAuth(req: { headers: IncomingHttpHeaders; user?: unknown }): boolean {
   const authReq = req as AuthenticatedRequest;
   if (authReq.user && authReq.user.role === "admin") {
     return true;
