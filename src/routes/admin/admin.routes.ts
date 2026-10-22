@@ -35,7 +35,6 @@ import type { AuthenticatedRequest } from "@/types/auth";
 import { listInvoices } from "./list-invoices";
 import { reviewInvoice } from "./review-invoice";
 import type { WaitlistService } from "@/services/waitlist.service";
-import { createWaitlistService } from "@/services/waitlist.service";
 
 export interface AdminRouterDependencies {
   dataSource: DataSource;

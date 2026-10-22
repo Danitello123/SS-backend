@@ -70,22 +70,30 @@ export interface BidPage {
  */
 export class SecondaryAuctionService {
   /** Active auctions: short TTL so countdown / highest bid stay fresh. */
-  private readonly activeCache = new TtlCache<AuctionView>(ACTIVE_CACHE_TTL_MS);
+  private readonly activeCache = new TtlCache({
+    ttlSeconds: ACTIVE_CACHE_TTL_MS / 1000,
+    namespace: "secondary-auction-active",
+  });
   /** Settled auctions are immutable, so they can be cached much longer. */
-  private readonly settledCache = new TtlCache<AuctionView>(SETTLED_CACHE_TTL_MS);
+  private readonly settledCache = new TtlCache({
+    ttlSeconds: SETTLED_CACHE_TTL_MS / 1000,
+    namespace: "secondary-auction-settled",
+  });
 
   constructor(
     private readonly dataSource: DataSource,
     private readonly now: () => Date = () => new Date(),
   ) {}
 
-  private cacheFor(view: Pick<AuctionView, "status">): TtlCache<AuctionView> {
+  private cacheFor(view: Pick<AuctionView, "status">): TtlCache {
     return view.status === AuctionStatus.ACTIVE ? this.activeCache : this.settledCache;
   }
 
-  private invalidate(auctionId: string): void {
-    this.activeCache.delete(auctionId);
-    this.settledCache.delete(auctionId);
+  private async invalidate(auctionId: string): Promise<void> {
+    await Promise.all([
+      this.activeCache.delete(auctionId),
+      this.settledCache.delete(auctionId),
+    ]);
   }
 
   /** Indexer: create/refresh an auction from AuctionCreated. */
@@ -105,7 +113,7 @@ export class SecondaryAuctionService {
     if (event.eventId) row.createdEventId = event.eventId;
 
     const saved = await repo.save(row);
-    this.invalidate(event.auctionId);
+    await this.invalidate(event.auctionId);
     return saved;
   }
 
@@ -136,7 +144,7 @@ export class SecondaryAuctionService {
     }
     await auctionRepo.save(auction);
 
-    this.invalidate(event.auctionId);
+    await this.invalidate(event.auctionId);
     return savedBid;
   }
 
@@ -154,14 +162,14 @@ export class SecondaryAuctionService {
     row.settlementAmount = event.settlementAmount ?? row.highestBid;
 
     const saved = await repo.save(row);
-    this.invalidate(event.auctionId);
+    await this.invalidate(event.auctionId);
     return saved;
   }
 
   async getAuction(auctionId: string): Promise<AuctionView> {
-    const activeHit = this.activeCache.get(auctionId);
+    const activeHit = await this.activeCache.get<AuctionView>(auctionId);
     if (activeHit) return activeHit;
-    const settledHit = this.settledCache.get(auctionId);
+    const settledHit = await this.settledCache.get<AuctionView>(auctionId);
     if (settledHit) return settledHit;
 
     const row = await this.dataSource.getRepository(SecondaryAuction).findOneBy({ auctionId });
@@ -170,7 +178,7 @@ export class SecondaryAuctionService {
     }
 
     const view = toView(row, this.now());
-    this.cacheFor(view).set(auctionId, view);
+    await this.cacheFor(view).set(auctionId, view);
     return view;
   }
 

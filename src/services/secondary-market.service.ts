@@ -1,4 +1,4 @@
-import { DataSource, EntityManager } from "typeorm";
+import { DataSource, EntityManager, MoreThan } from "typeorm";
 import { Decimal } from "decimal.js";
 import { SecondaryListing } from "../models/SecondaryListing.model";
 import { Invoice } from "../models/Invoice.model";
@@ -121,6 +121,7 @@ export class SecondaryMarketService {
           investorWallet: sellerWallet,
           status: InvestmentStatus.CONFIRMED,
         },
+        lock: { mode: "pessimistic_write" },
       });
 
       if (investments.length === 0) {
@@ -137,11 +138,24 @@ export class SecondaryMarketService {
         new Decimal(0)
       );
 
-      // Check if quantity exceeds holdings
-      if (quantityDecimal.gt(totalHoldings)) {
+      const activeListings = await manager.find(SecondaryListing, {
+        where: {
+          invoiceId,
+          sellerWallet,
+          status: ListingStatus.ACTIVE,
+          expiresAt: MoreThan(new Date()),
+        },
+      });
+      const listedQuantity = activeListings.reduce(
+        (sum, listing) => sum.plus(new Decimal(listing.quantity)),
+        new Decimal(0)
+      );
+      const availableHoldings = totalHoldings.minus(listedQuantity);
+
+      if (quantityDecimal.gt(availableHoldings)) {
         throw new ServiceError(
           "INSUFFICIENT_HOLDINGS",
-          `Requested quantity ${quantity} exceeds available holdings ${totalHoldings.toFixed(4)}`,
+          `Requested quantity ${quantity} exceeds available holdings ${availableHoldings.toFixed(4)}`,
           400
         );
       }

@@ -5,6 +5,7 @@ import { ServiceError } from "../utils/service-error";
 import { TtlCache } from "../lib/ttl-cache";
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
+const CACHE_TTL_SECONDS = CACHE_TTL_MS / 1000;
 
 export interface BenchmarkUpdatedEvent {
   sector: string;
@@ -43,8 +44,11 @@ export interface InvoiceBenchmarkComparison {
  * through a 5-minute TTL cache that is invalidated per sector on write.
  */
 export class BenchmarkService {
-  private readonly cache = new TtlCache<SectorBenchmarkView>(CACHE_TTL_MS);
-  private readonly comparisonCache = new TtlCache<InvoiceBenchmarkComparison>(CACHE_TTL_MS);
+  private readonly cache = new TtlCache({ ttlSeconds: CACHE_TTL_SECONDS, namespace: "benchmark" });
+  private readonly comparisonCache = new TtlCache({
+    ttlSeconds: CACHE_TTL_SECONDS,
+    namespace: "benchmark-comparison",
+  });
 
   constructor(private readonly dataSource: DataSource) {}
 
@@ -76,7 +80,7 @@ export class BenchmarkService {
 
   async getSectorBenchmark(sector: string): Promise<SectorBenchmarkView> {
     const normalized = sector.trim().toLowerCase();
-    const cached = this.cache.get(normalized);
+    const cached = await this.cache.get<SectorBenchmarkView>(normalized);
     if (cached) return cached;
 
     const row = await this.dataSource.getRepository(SectorBenchmark).findOneBy({
@@ -91,13 +95,13 @@ export class BenchmarkService {
     }
 
     const view = toView(row);
-    this.cache.set(normalized, view);
+    await this.cache.set(normalized, view);
     return view;
   }
 
   /** Invoice metrics side-by-side with its sector benchmark (#676). */
   async getInvoiceBenchmark(invoiceId: string): Promise<InvoiceBenchmarkComparison> {
-    const cached = this.comparisonCache.get(invoiceId);
+    const cached = await this.comparisonCache.get<InvoiceBenchmarkComparison>(invoiceId);
     if (cached) return cached;
 
     const invoice = await this.dataSource.getRepository(Invoice).findOneBy({ id: invoiceId });
@@ -126,7 +130,7 @@ export class BenchmarkService {
       benchmark,
     };
 
-    this.comparisonCache.set(invoiceId, comparison);
+    await this.comparisonCache.set(invoiceId, comparison);
     return comparison;
   }
 

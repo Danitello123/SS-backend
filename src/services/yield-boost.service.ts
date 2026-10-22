@@ -6,6 +6,7 @@ import { ServiceError } from "../utils/service-error";
 import { TtlCache } from "../lib/ttl-cache";
 
 const CACHE_TTL_MS = 60_000;
+const CACHE_TTL_SECONDS = CACHE_TTL_MS / 1000;
 
 /** Boost in basis points per eligible loyalty tier (#678). Bronze is ineligible. */
 const TIER_BOOST_BPS: Partial<Record<LoyaltyTier, number>> = {
@@ -39,7 +40,10 @@ export interface YieldBoostView {
  * loyalty tier at request time (Bronze and unregistered are ineligible).
  */
 export class YieldBoostService {
-  private readonly cache = new TtlCache<YieldBoostView>(CACHE_TTL_MS);
+  private readonly cache = new TtlCache({
+    ttlSeconds: CACHE_TTL_SECONDS,
+    namespace: "yield-boost",
+  });
 
   constructor(private readonly dataSource: DataSource) {}
 
@@ -81,7 +85,7 @@ export class YieldBoostService {
   async getBoost(invoiceId: string, wallet: string): Promise<YieldBoostView> {
     const normalized = wallet.trim();
     const cacheKey = `${invoiceId}:${normalized}`;
-    const cached = this.cache.get(cacheKey);
+    const cached = await this.cache.get<YieldBoostView>(cacheKey);
     if (cached) return cached;
 
     const invoice = await this.dataSource.getRepository(Invoice).findOneBy({ id: invoiceId });
@@ -112,7 +116,7 @@ export class YieldBoostService {
       boostedYield,
     };
 
-    this.cache.set(cacheKey, view);
+    await this.cache.set(cacheKey, view);
     return view;
   }
 

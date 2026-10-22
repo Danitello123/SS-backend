@@ -7,6 +7,9 @@ import { CommunityProgramsService } from "../services/community-programs.service
 import { FraudReportStatus } from "../models/InvoiceFraudReport.model";
 import { WaitlistEntry } from "../models/WaitlistEntry.model";
 
+type AuthenticatedRequestWithParams<Params extends Record<string, string>> = Request<Params> &
+  Pick<AuthenticatedRequest, "user">;
+
 export function createCommunityProgramsRouter(dataSource: DataSource, authService: AuthService): Router {
   const router = Router();
   const service = new CommunityProgramsService(dataSource);
@@ -34,9 +37,11 @@ export function createCommunityProgramsRouter(dataSource: DataSource, authServic
     try { res.status(201).json({ success: true, data: await service.registerWaitlist(String(req.body?.wallet ?? ""), String(req.body?.email ?? ""), req.body?.referralCode) }); }
     catch (error) { forward(next, error); }
   });
-  router.get("/waitlist/:wallet", async (req: Request, res: Response, next) => {
+  router.get("/waitlist/:wallet", async (req: Request<{ wallet: string }>, res: Response, next) => {
     try {
-      const entry = await dataSource.getRepository(WaitlistEntry).findOne({ where: { wallet: req.params.wallet } });
+      const entry = await dataSource.getRepository(WaitlistEntry).findOne({
+        where: { wallet: String(req.params.wallet) },
+      });
       if (!entry) { res.status(404).json({ success: false, error: "Waitlist entry not found" }); return; }
       res.json({ success: true, data: await service.waitlistView(entry as never) });
     } catch (error) { forward(next, error); }
@@ -46,23 +51,25 @@ export function createCommunityProgramsRouter(dataSource: DataSource, authServic
     catch (error) { forward(next, error); }
   });
 
-  router.post("/invoices/:id/reports", authenticate, async (req: AuthenticatedRequest, res: Response, next) => {
+  router.post("/invoices/:id/reports", authenticate, async (req: AuthenticatedRequestWithParams<{ id: string }>, res: Response, next) => {
     try { res.status(201).json({ success: true, data: await service.createFraudReport({ invoiceId: req.params.id, wallet: String(req.user?.stellarAddress ?? ""), reason: String(req.body?.reason ?? ""), detail: String(req.body?.detail ?? "") }) }); }
     catch (error) { forward(next, error); }
   });
 
   const admin = Router();
-  admin.use(authenticate, requireAdmin((process.env.ADMIN_WALLETS ?? "").split(",").map((wallet) => wallet.trim()).filter(Boolean)));
-  admin.get("/reports", async (req: Request, res: Response, next) => {
+  const authorizeAdmin = requireAdmin(
+    (process.env.ADMIN_WALLETS ?? "").split(",").map((wallet) => wallet.trim()).filter(Boolean)
+  );
+  admin.get("/reports", authenticate, authorizeAdmin, async (req: Request, res: Response, next) => {
     try { const page = Math.max(1, Number(req.query.page) || 1); const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 25)); const [items, total] = await service.listFraudReports(page, pageSize); res.json({ success: true, data: items, pagination: { page, pageSize, total } }); }
     catch (error) { forward(next, error); }
   });
-  admin.patch("/reports/:id", async (req: Request, res: Response, next) => {
+  admin.patch("/reports/:id", authenticate, authorizeAdmin, async (req: Request<{ id: string }>, res: Response, next) => {
     try { res.json({ success: true, data: await service.reviewFraudReport(req.params.id, String(req.body?.status) as FraudReportStatus, req.body?.reviewNote) }); }
     catch (error) { forward(next, error); }
   });
-  admin.post("/waitlist/:wallet/approve", async (req: Request, res: Response, next) => {
-    try { res.json({ success: true, data: await service.approveWaitlist(req.params.wallet) }); }
+  admin.post("/waitlist/:wallet/approve", authenticate, authorizeAdmin, async (req: Request<{ wallet: string }>, res: Response, next) => {
+    try { res.json({ success: true, data: await service.approveWaitlist(String(req.params.wallet)) }); }
     catch (error) { forward(next, error); }
   });
   router.use("/admin", admin);
