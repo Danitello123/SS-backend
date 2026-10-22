@@ -60,6 +60,7 @@ export interface DecodedSorobanEvent {
   topics: unknown[];
   data: unknown;
   inSuccessfulContractCall: boolean;
+  occurredAt?: Date;
 }
 
 export interface SimulateTransactionResult {
