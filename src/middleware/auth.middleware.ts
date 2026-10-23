@@ -37,8 +37,11 @@ export const MAX_BEARER_TOKEN_LENGTH = 4_096;
  */
 export const DEFAULT_AUTH_LOOKUP_TIMEOUT_MS = 5_000;
 
-/** Tokens are signed by AuthService with the default HMAC algorithm. */
-const ALLOWED_JWT_ALGORITHMS: jwt.Algorithm[] = ["HS256", "RS256", "ES256"];
+/**
+ * Tokens are verified against the symmetric JWT_SECRET, so only HMAC is
+ * accepted. Allowing RS256/ES256 here would open algorithm confusion attacks.
+ */
+export const ALLOWED_JWT_ALGORITHMS: jwt.Algorithm[] = ["HS256"];
 
 const JWT_SHAPE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$/;
 
@@ -268,11 +271,25 @@ export async function authenticateJWT(req: Request, _res: Response, next: NextFu
   }
 
   const { userId, stellarAddress, wallet, userType, role } = claims as Partial<AuthTokenPayload>;
+  const resolvedAddress = nonEmptyString(wallet) ?? nonEmptyString(stellarAddress) ?? subject;
+
+  // Issue #610: Check wallet suspension status
+  const { isWalletSuspended } = await import("@/middleware/suspended-wallet.middleware");
+  if (isWalletSuspended(resolvedAddress)) {
+    next(
+      new HttpError(
+        403,
+        "Wallet is suspended and cannot perform authenticated actions.",
+        buildAuthFailureDetails(token, "wallet_suspended")
+      )
+    );
+    return;
+  }
 
   (req as AuthenticatedRequest).user = {
     id: nonEmptyString(userId) ?? subject,
     // Tokens are issued with the wallet address as subject.
-    stellarAddress: nonEmptyString(wallet) ?? nonEmptyString(stellarAddress) ?? subject,
+    stellarAddress: resolvedAddress,
     email: null,
     userType: userType || role || (null as unknown as UserType),
     kycStatus: null as unknown as KYCStatus,

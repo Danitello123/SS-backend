@@ -49,9 +49,23 @@ import { createSwapRouter } from "./routes/swap.routes";
 import { createRoyaltiesRouter } from "./routes/royalties.routes";
 import { createSubscriptionsRouter } from "./routes/subscriptions.routes";
 import { createOnboardingRouter } from "./routes/onboarding.routes";
+import { createCommunityProgramsRouter } from "./routes/community-programs.routes";
 import { createIssuerReputationRouter } from "./routes/issuer-reputation.routes";
+import { createOnchainEventViewsRouter } from "./routes/onchain-event-views.routes";
+import { createFxRouter } from "./routes/fx.routes";
+import {
+  createBenchmarkRouter,
+  createInvoiceBenchmarkRouter,
+} from "./routes/benchmark.routes";
+import { createReferralTierRouter } from "./routes/referral-tier.routes";
+import { createYieldBoostRouter } from "./routes/yield-boost.routes";
+import {
+  createSecondaryAuctionRouter,
+  createInvoiceAuctionRouter,
+} from "./routes/secondary-auction.routes";
 
 import type { AuthService } from "./services/auth.service";
+import type { WaitlistService } from "./services/waitlist.service";
 import type { NotificationService } from "./services/notification.service";
 import type { InvoiceService } from "./services/invoice.service";
 import type { InvestmentService } from "./services/investment.service";
@@ -72,6 +86,10 @@ import type { FeeScheduleService } from "./services/fee-schedule.service";
 import type { IssuerReputationService } from "./services/issuer-reputation.service";
 import type { InvestorRiskProfileService } from "./services/investor-risk-profile.service";
 import type { InvoiceDraftService } from "./services/invoice-draft.service";
+import type { BenchmarkService } from "./services/benchmark.service";
+import type { ReferralTierService } from "./services/referral-tier.service";
+import type { YieldBoostService } from "./services/yield-boost.service";
+import type { SecondaryAuctionService } from "./services/secondary-auction.service";
 
 import dataSource from "./config/database";
 import { getRedisClient } from "./config/redis";
@@ -216,11 +234,17 @@ export interface AppDependencies {
   investorRiskProfileService?: InvestorRiskProfileService;
   draftService?: InvoiceDraftService;
   invoiceEscrowContractService?: import("./services/stellar/invoice-escrow-contract.service").InvoiceEscrowContractService;
+  benchmarkService?: BenchmarkService;
+  referralTierService?: ReferralTierService;
+  yieldBoostService?: YieldBoostService;
+  secondaryAuctionService?: SecondaryAuctionService;
   logger?: AppLogger;
   metricsEnabled?: boolean;
   metricsRegistry?: MetricsRegistry;
   readinessChecks?: ReadinessChecks;
   config?: import("./config/env").AppConfig;
+  /** Optional: enables waitlist management endpoints (issue #599) */
+  waitlistService?: WaitlistService;
 
   http?: {
     trustProxy?: boolean | number | string;
@@ -271,6 +295,11 @@ export function createApp({
   investorRiskProfileService,
   draftService,
   invoiceEscrowContractService,
+  waitlistService,
+  benchmarkService,
+  referralTierService,
+  yieldBoostService,
+  secondaryAuctionService,
   logger: appLogger = logger,
   metricsEnabled = true,
   metricsRegistry = new MetricsRegistry(),
@@ -300,7 +329,9 @@ export function createApp({
 
   app.use(
     cors({
-      origin: http?.corsAllowedOrigins ?? true,
+      origin: http?.corsAllowedOrigins && http.corsAllowedOrigins.length > 0
+        ? http.corsAllowedOrigins
+        : false,
       credentials: http?.corsAllowCredentials ?? false,
     })
   );
@@ -413,6 +444,10 @@ export function createApp({
 
   app.use("/api/v1/auth", createAuthRouter(authService, appLogger));
   app.use("/auth", createAuthRouter(authService, appLogger));
+  app.use("/api/v1", createCommunityProgramsRouter(dataSource, authService));
+  // #672-#675 — minimal read views over already-indexed syndicate/risk/loyalty/pool events.
+  app.use("/api/v1", createOnchainEventViewsRouter(dataSource));
+  app.use("/", createOnchainEventViewsRouter(dataSource));
 
   if (kycService) {
     app.use("/api/v1/kyc", createKycRouter(kycService, authService));
@@ -515,6 +550,10 @@ export function createApp({
     app.use("/api/v1/watchlist", createWatchlistRouter({ watchlistService, authService }));
   }
 
+  // Issue #663 — FX rate indexer & currency conversion
+  app.use("/api/v1/fx", createFxRouter());
+  app.use("/fx", createFxRouter());
+
   // ---- Keys: Ratings Leaderboard, Buy Limits, Curve Migrations, Merge Proposals ----
   if (
     ratingsLeaderboardService ||
@@ -594,6 +633,25 @@ export function createApp({
         feeScheduleService,
       })
     );
+  }
+
+  // Contract event indexes (#676-#679)
+  if (benchmarkService) {
+    app.use("/api/v1/benchmarks", createBenchmarkRouter({ benchmarkService }));
+    app.use("/api/v1/invoices", createInvoiceBenchmarkRouter({ benchmarkService }));
+  }
+
+  if (referralTierService) {
+    app.use("/api/v1/referrals", createReferralTierRouter({ referralTierService }));
+  }
+
+  if (yieldBoostService) {
+    app.use("/api/v1/invoices", createYieldBoostRouter({ yieldBoostService }));
+  }
+
+  if (secondaryAuctionService) {
+    app.use("/api/v1/auctions", createSecondaryAuctionRouter({ secondaryAuctionService }));
+    app.use("/api/v1/invoices", createInvoiceAuctionRouter({ secondaryAuctionService }));
   }
 
   app.use(notFoundMiddleware);

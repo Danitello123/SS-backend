@@ -3,10 +3,12 @@ import ipRangeCheck from "ip-range-check";
 
 export function ipWhitelistMiddleware(allowedCidrs: string[]) {
   return (req: Request, res: Response, next: NextFunction): void => {
-    const clientIp =
-      (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() ||
-      req.ip ||
-      req.socket.remoteAddress;
+    const forwardedFor = req.headers["x-forwarded-for"];
+    const forwardedIp =
+      typeof forwardedFor === "string"
+        ? forwardedFor.split(",")[0]?.trim()
+        : forwardedFor?.[0]?.split(",")[0]?.trim();
+    const clientIp = req.ip || forwardedIp || req.socket.remoteAddress;
 
     if (!clientIp || !ipRangeCheck(clientIp, allowedCidrs)) {
       res.status(403).json({

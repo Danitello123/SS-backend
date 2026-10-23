@@ -32,6 +32,102 @@ export interface TrendsResult {
   };
 }
 
+/**
+ * Investment statuses that count toward realized funding volume.
+ * Realized funding includes active (confirmed) and settled investments,
+ * while excluding unfunded commitments (pending) and reversed/abandoned
+ * commitments (cancelled).
+ */
+export const FUNDED_INVESTMENT_STATUSES: readonly InvestmentStatus[] = Object.freeze([
+  InvestmentStatus.CONFIRMED,
+  InvestmentStatus.SETTLED,
+]);
+
+export function isFundedInvestmentStatus(status: InvestmentStatus): boolean {
+  return (FUNDED_INVESTMENT_STATUSES as readonly InvestmentStatus[]).includes(status);
+}
+
+export interface CaptureSnapshotOptions {
+  /**
+   * Target reporting date to capture (Date or string 'YYYY-MM-DD').
+   * If omitted, derived from runTime or defaults to the previous complete UTC day.
+   */
+  targetDate?: Date | string;
+
+  /**
+   * Reference run time. When targetDate is not specified, targetDate is computed
+   * as the previous complete UTC day relative to this runTime.
+   */
+  runTime?: Date;
+
+  /**
+   * Optional custom half-open funding interval [start, end) where end is exclusive.
+   * If omitted, the full UTC day [targetDate 00:00:00.000Z, nextDay 00:00:00.000Z) is used.
+   */
+  fundingInterval?: {
+    start: Date;
+    end: Date;
+  };
+}
+
+/**
+ * Returns the previous complete UTC day relative to referenceTime (midnight UTC).
+ * E.g., at 2026-03-02 00:00:00 UTC, the previous complete UTC day is 2026-03-01.
+ */
+export function getPreviousUtcDay(referenceTime: Date = new Date()): Date {
+  return new Date(
+    Date.UTC(
+      referenceTime.getUTCFullYear(),
+      referenceTime.getUTCMonth(),
+      referenceTime.getUTCDate() - 1,
+      0,
+      0,
+      0,
+      0
+    )
+  );
+}
+
+/**
+ * Calculates the UTC half-open interval [dayStart, dayEnd) and date key (YYYY-MM-DD)
+ * for a target reporting date, completely independent of local timezone.
+ */
+export function getUtcReportingDayBounds(dateOrString?: Date | string): {
+  dayStart: Date;
+  dayEnd: Date;
+  snapshotDate: string;
+} {
+  const target = dateOrString ?? getPreviousUtcDay();
+
+  let year: number;
+  let month: number;
+  let day: number;
+
+  if (typeof target === "string") {
+    const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(target);
+    if (match) {
+      year = parseInt(match[1], 10);
+      month = parseInt(match[2], 10) - 1;
+      day = parseInt(match[3], 10);
+    } else {
+      const parsed = new Date(target);
+      year = parsed.getUTCFullYear();
+      month = parsed.getUTCMonth();
+      day = parsed.getUTCDate();
+    }
+  } else {
+    year = target.getUTCFullYear();
+    month = target.getUTCMonth();
+    day = target.getUTCDate();
+  }
+
+  const dayStart = new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
+  const dayEnd = new Date(Date.UTC(year, month, day + 1, 0, 0, 0, 0));
+  const snapshotDate = dayStart.toISOString().slice(0, 10);
+
+  return { dayStart, dayEnd, snapshotDate };
+}
+
 export class AnalyticsSnapshotService {
   private readonly snapshotRepo: Repository<AnalyticsSnapshot>;
   private readonly invoiceRepo: Repository<Invoice>;
@@ -44,15 +140,42 @@ export class AnalyticsSnapshotService {
   }
 
   /**
-   * Captures a platform-wide analytics snapshot for today (UTC).
-   * Called daily at midnight UTC by the cron job.
-   * If a snapshot for today already exists, it is overwritten (idempotent).
+   * Captures a platform-wide analytics snapshot for a reporting day (UTC).
+   * Separates the run time from the funding interval being archived:
+   * by default or when invoked at 00:00 UTC, it archives the previous complete UTC day
+   * using the half-open interval [dayStart, dayEnd).
+   *
+   * If a snapshot for the reporting day already exists, it is updated in-place (idempotent).
    */
-  async captureSnapshot(dateOverride?: Date): Promise<AnalyticsSnapshotDTO> {
-    const now = dateOverride ?? new Date();
-    const snapshotDate = this.toDateKey(now);
+  async captureSnapshot(
+    optionsOrDate?: Date | string | CaptureSnapshotOptions
+  ): Promise<AnalyticsSnapshotDTO> {
+    let targetDate: Date | string | undefined;
+    let runTime: Date | undefined;
+    let customInterval: { start: Date; end: Date } | undefined;
 
-    logger.info("AnalyticsSnapshot: Starting daily capture", { snapshotDate });
+    if (optionsOrDate instanceof Date || typeof optionsOrDate === "string") {
+      targetDate = optionsOrDate;
+    } else if (optionsOrDate && typeof optionsOrDate === "object") {
+      targetDate = optionsOrDate.targetDate;
+      runTime = optionsOrDate.runTime;
+      customInterval = optionsOrDate.fundingInterval;
+    }
+
+    if (!targetDate && runTime) {
+      targetDate = getPreviousUtcDay(runTime);
+    }
+
+    const bounds = getUtcReportingDayBounds(targetDate);
+    const snapshotDate = bounds.snapshotDate;
+    const dayStart = customInterval ? customInterval.start : bounds.dayStart;
+    const dayEnd = customInterval ? customInterval.end : bounds.dayEnd;
+
+    logger.info("AnalyticsSnapshot: Starting capture", {
+      snapshotDate,
+      intervalStart: dayStart.toISOString(),
+      intervalEnd: dayEnd.toISOString(),
+    });
 
     // ---- Invoice counts by status ----
     const statusCounts = await this.invoiceRepo
@@ -77,39 +200,41 @@ export class AnalyticsSnapshotService {
     const totalInvoicesRejected = countMap[InvoiceStatus.REJECTED] ?? 0;
     const totalInvoices = Object.values(countMap).reduce((a, b) => a + b, 0);
 
-    // ---- Daily funding volume (confirmed investments created today) ----
-    const dayStart = new Date(now);
-    dayStart.setUTCHours(0, 0, 0, 0);
-    const dayEnd = new Date(now);
-    dayEnd.setUTCHours(23, 59, 59, 999);
-
+    // ---- Daily funding volume (realized investments: confirmed or settled, in [dayStart, dayEnd)) ----
     const dailyVolumeResult = await this.investmentRepo
       .createQueryBuilder("i")
       .select("COALESCE(SUM(CAST(i.investment_amount AS DECIMAL)), 0)", "volume")
-      .where("i.status = :status", { status: InvestmentStatus.CONFIRMED })
+      .where("i.status IN (:...statuses)", { statuses: FUNDED_INVESTMENT_STATUSES })
       .andWhere("i.created_at >= :dayStart", { dayStart })
-      .andWhere("i.created_at <= :dayEnd", { dayEnd })
-      .getRawOne<{ volume: string }>();
+      .andWhere("i.created_at < :dayEnd", { dayEnd })
+      .getRawOne<{ volume: string | number }>();
 
-    const dailyFundingVolume = dailyVolumeResult?.volume ?? "0";
+    const dailyFundingVolume =
+      dailyVolumeResult?.volume !== undefined && dailyVolumeResult?.volume !== null
+        ? String(dailyVolumeResult.volume)
+        : "0";
 
-    // ---- Cumulative funding volume (all confirmed investments) ----
+    // ---- Cumulative funding volume (all realized investments confirmed or settled up to dayEnd) ----
     const cumulativeResult = await this.investmentRepo
       .createQueryBuilder("i")
       .select("COALESCE(SUM(CAST(i.investment_amount AS DECIMAL)), 0)", "volume")
-      .where("i.status = :status", { status: InvestmentStatus.CONFIRMED })
-      .getRawOne<{ volume: string }>();
+      .where("i.status IN (:...statuses)", { statuses: FUNDED_INVESTMENT_STATUSES })
+      .andWhere("i.created_at < :dayEnd", { dayEnd })
+      .getRawOne<{ volume: string | number }>();
 
-    const cumulativeFundingVolume = cumulativeResult?.volume ?? "0";
+    const cumulativeFundingVolume =
+      cumulativeResult?.volume !== undefined && cumulativeResult?.volume !== null
+        ? String(cumulativeResult.volume)
+        : "0";
 
-    // ---- Active investor count (distinct investors with confirmed investments) ----
+    // ---- Active investor count (distinct investors with active confirmed investments) ----
     const activeInvestorResult = await this.investmentRepo
       .createQueryBuilder("i")
       .select("COUNT(DISTINCT i.investor_id)", "count")
       .where("i.status = :status", { status: InvestmentStatus.CONFIRMED })
-      .getRawOne<{ count: string }>();
+      .getRawOne<{ count: string | number }>();
 
-    const activeInvestorCount = parseInt(activeInvestorResult?.count ?? "0", 10);
+    const activeInvestorCount = parseInt(String(activeInvestorResult?.count ?? "0"), 10);
 
     // ---- Settlement rate ----
     // Ratio of settled to (settled + funded)
