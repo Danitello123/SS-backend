@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import type { InvoiceService } from "@/services/invoice.service";
 import { ServiceError } from "@/utils/service-error";
 import { logger } from "@/observability/logger";
+import { isValidAdminAuth } from "@/lib/admin-auth-helper";
 
 interface ApproveInvoiceParams {
   id: string;
@@ -21,8 +22,7 @@ export async function approveInvoice(
   invoiceService: InvoiceService
 ) {
   try {
-    const adminKey = req.headers["x-admin-key"];
-    if (adminKey !== process.env.ADMIN_API_KEY) {
+    if (!isValidAdminAuth(req)) {
       return res.status(401).json({ error: "Unauthorized" });
     }
 

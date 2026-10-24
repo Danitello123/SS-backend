@@ -4,6 +4,7 @@ import { User } from "@/models/User.model";
 import { KYCStatus } from "@/types/enums";
 import { logKYCStatusChange, logKYCReviewFailure } from "@/lib/kyc-status-log";
 import { logger } from "@/observability/logger";
+import { isValidAdminAuth } from "@/lib/admin-auth-helper";
 
 interface ApproveKYCBody {
   userId: string;
@@ -16,10 +17,9 @@ export async function approveKYC(
   dataSource: DataSource
 ) {
   try {
-    const adminKey = req.headers["x-admin-key"];
     const correlationId = req.headers["x-request-id"] as string | undefined;
 
-    if (adminKey !== process.env.ADMIN_API_KEY) {
+    if (!isValidAdminAuth(req)) {
       logKYCReviewFailure(logger, {
         userId: req.body?.userId,
         reviewerId: req.body?.reviewerId,

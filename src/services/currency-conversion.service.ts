@@ -1,23 +1,95 @@
+import { StrKey } from "stellar-sdk";
 import type { AppLogger } from "../observability/logger";
 import { ServiceError } from "../utils/service-error";
+
+export const DEFAULT_QUOTE_ASSET_CODE = "USDC";
+
+export const STELLAR_USDC_ISSUERS = {
+  mainnet: "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+  testnet: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+} as const;
+
+export type StellarNetwork = "mainnet" | "testnet";
 
 export interface CurrencyConversionDependencies {
   horizonUrl: string;
   logger: AppLogger;
   fetchImplementation?: typeof fetch;
+  quoteAssetCode?: string;
+  quoteAssetIssuer?: string;
+  network?: "mainnet" | "testnet" | string;
 }
 
 export class CurrencyConversionService {
   private readonly horizonUrl: string;
   private readonly logger: AppLogger;
   private readonly fetchImplementation: typeof fetch;
+  readonly quoteAssetCode: string;
+  readonly quoteAssetIssuer: string;
   private cachedXlmUsdRate: { rate: number; expiresAt: number } | null = null;
-  private static readonly RATE_CACHE_TTL_MS = 60_000; // 1 minute cache
+  static readonly RATE_CACHE_TTL_MS = 60_000; // 1 minute cache
 
   constructor(deps: CurrencyConversionDependencies) {
+    if (!deps.horizonUrl || typeof deps.horizonUrl !== "string") {
+      throw new ServiceError("INVALID_HORIZON_URL", "horizonUrl is required", 400);
+    }
     this.horizonUrl = deps.horizonUrl;
     this.logger = deps.logger;
     this.fetchImplementation = deps.fetchImplementation ?? fetch;
+
+    // Resolve quote asset code
+    this.quoteAssetCode =
+      deps.quoteAssetCode ??
+      process.env.STELLAR_USDC_ASSET_CODE ??
+      process.env.QUOTE_ASSET_CODE ??
+      DEFAULT_QUOTE_ASSET_CODE;
+
+    if (!this.quoteAssetCode || !/^[A-Za-z0-9]{1,12}$/.test(this.quoteAssetCode)) {
+      throw new ServiceError(
+        "INVALID_QUOTE_ASSET_CODE",
+        `Invalid quote asset code: "${this.quoteAssetCode}". Asset code must be 1 to 12 alphanumeric characters.`,
+        400
+      );
+    }
+
+    // Resolve network
+    const networkRaw = (
+      deps.network ??
+      process.env.STELLAR_NETWORK ??
+      (deps.horizonUrl.includes("testnet") ? "testnet" : "mainnet")
+    ).toLowerCase();
+
+    const network: StellarNetwork =
+      networkRaw === "mainnet" || networkRaw === "public" || networkRaw === "pubnet"
+        ? "mainnet"
+        : "testnet";
+
+    // Resolve quote asset issuer
+    this.quoteAssetIssuer =
+      deps.quoteAssetIssuer ??
+      process.env.STELLAR_USDC_ASSET_ISSUER ??
+      process.env.QUOTE_ASSET_ISSUER ??
+      STELLAR_USDC_ISSUERS[network];
+
+    // Validate issuer Stellar public-key encoding at configuration time
+    if (!this.quoteAssetIssuer || !StrKey.isValidEd25519PublicKey(this.quoteAssetIssuer)) {
+      throw new ServiceError(
+        "INVALID_QUOTE_ASSET_ISSUER",
+        `Invalid quote asset issuer: "${this.quoteAssetIssuer}". Issuer must be a valid 56-character Stellar public key.`,
+        400
+      );
+    }
+  }
+
+  /**
+   * Constructs the Horizon order_book query URL using the configured asset code and issuer.
+   */
+  getOrderBookUrl(): string {
+    const buyingAssetType = this.quoteAssetCode.length <= 4 ? "credit_alphanum4" : "credit_alphanum12";
+    const base = this.horizonUrl.replace(/\/$/, "");
+    return `${base}/order_book?selling_asset_type=native&buying_asset_type=${buyingAssetType}&buying_asset_code=${encodeURIComponent(
+      this.quoteAssetCode
+    )}&buying_asset_issuer=${this.quoteAssetIssuer}`;
   }
 
   /**
@@ -30,7 +102,7 @@ export class CurrencyConversionService {
     }
 
     try {
-      const url = `${this.horizonUrl.replace(/\/$/, "")}/order_book?selling_asset_type=native&buying_asset_type=credit_alphanum4&buying_asset_code=USDC&buying_asset_issuer=GA5ZSEEX23J59UQ8Y47XM2GQ7X25NOX7MB6M23F4OB3A`;
+      const url = this.getOrderBookUrl();
       const response = await this.fetchImplementation(url);
       if (response.ok) {
         const data = (await response.json()) as { bids?: Array<{ price: string }> };
@@ -71,4 +143,10 @@ export class CurrencyConversionService {
     if (rate === 0) throw new ServiceError("RATE_UNAVAILABLE", "Conversion rate unavailable", 503);
     return Math.round((usdAmount / rate) * 10_000_000) / 10_000_000;
   }
+}
+
+export function createCurrencyConversionService(
+  deps: CurrencyConversionDependencies
+): CurrencyConversionService {
+  return new CurrencyConversionService(deps);
 }

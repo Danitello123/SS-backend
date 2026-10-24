@@ -7,6 +7,9 @@ import { CommunityProgramsService } from "../services/community-programs.service
 import { FraudReportStatus } from "../models/InvoiceFraudReport.model";
 import { WaitlistEntry } from "../models/WaitlistEntry.model";
 
+type AuthenticatedRequestWithParams<Params extends Record<string, string>> = Request<Params> &
+  Pick<AuthenticatedRequest, "user">;
+
 export function createCommunityProgramsRouter(dataSource: DataSource, authService: AuthService): Router {
   const router = Router();
   const service = new CommunityProgramsService(dataSource);
@@ -34,7 +37,7 @@ export function createCommunityProgramsRouter(dataSource: DataSource, authServic
     try { res.status(201).json({ success: true, data: await service.registerWaitlist(String(req.body?.wallet ?? ""), String(req.body?.email ?? ""), req.body?.referralCode) }); }
     catch (error) { forward(next, error); }
   });
-  router.get("/waitlist/:wallet", async (req: Request, res: Response, next) => {
+  router.get("/waitlist/:wallet", async (req: Request<{ wallet: string }>, res: Response, next) => {
     try {
       const entry = await dataSource.getRepository(WaitlistEntry).findOne({
         where: { wallet: String(req.params.wallet) },
@@ -48,8 +51,8 @@ export function createCommunityProgramsRouter(dataSource: DataSource, authServic
     catch (error) { forward(next, error); }
   });
 
-  router.post("/invoices/:id/reports", authenticate, async (req: AuthenticatedRequest, res: Response, next) => {
-    try { res.status(201).json({ success: true, data: await service.createFraudReport({ invoiceId: String(req.params.id), wallet: String(req.user?.stellarAddress ?? ""), reason: String(req.body?.reason ?? ""), detail: String(req.body?.detail ?? "") }) }); }
+  router.post("/invoices/:id/reports", authenticate, async (req: AuthenticatedRequestWithParams<{ id: string }>, res: Response, next) => {
+    try { res.status(201).json({ success: true, data: await service.createFraudReport({ invoiceId: req.params.id, wallet: String(req.user?.stellarAddress ?? ""), reason: String(req.body?.reason ?? ""), detail: String(req.body?.detail ?? "") }) }); }
     catch (error) { forward(next, error); }
   });
 
