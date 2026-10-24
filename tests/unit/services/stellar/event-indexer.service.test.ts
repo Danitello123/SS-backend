@@ -1,4 +1,4 @@
-import { nativeToScVal, xdr } from "stellar-sdk";
+import { nativeToScVal, xdr } from "@stellar/stellar-sdk";
 import { EventIndexerService } from "../../../../src/services/stellar/event-indexer.service";
 import { InvestmentStatus, InvoiceStatus } from "../../../../src/types/enums";
 import type { AppLogger } from "../../../../src/observability/logger";
