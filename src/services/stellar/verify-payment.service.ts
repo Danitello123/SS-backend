@@ -4,6 +4,7 @@ import { Investment } from "../../models/Investment.model";
 import { Transaction } from "../../models/Transaction.model";
 import { InvestmentStatus, TransactionStatus, TransactionType } from "../../types/enums";
 import { ServiceError } from "../../utils/service-error";
+import type { AppLogger } from "../../observability/logger";
 import { normalizeHorizonPayment, normalizeHorizonTransaction } from "../../utils/horizon-response";
 
 type FetchLike = typeof fetch;
@@ -65,7 +66,7 @@ interface PaymentVerificationUnitOfWork {
 
 interface PaymentTransactionRunner {
   runInTransaction<T>(
-    callback: (unitOfWork: PaymentVerificationUnitOfWork) => Promise<T>,
+    callback: (unitOfWork: PaymentVerificationUnitOfWork) => Promise<T>
   ): Promise<T>;
 }
 
@@ -75,6 +76,7 @@ interface VerifyPaymentServiceDependencies {
   config: PaymentVerificationConfig;
   fetchImplementation?: FetchLike;
   sleep?: SleepFn;
+  logger?: AppLogger;
 }
 
 export class VerifyPaymentService {
@@ -83,18 +85,27 @@ export class VerifyPaymentService {
   private readonly config: PaymentVerificationConfig;
   private readonly fetchImplementation: FetchLike;
   private readonly sleep: SleepFn;
+  private readonly logger: AppLogger;
+
+  private static NOOP_LOGGER: AppLogger = {
+    debug: () => undefined,
+    info: () => undefined,
+    warn: () => undefined,
+    error: () => undefined,
+    child: () => VerifyPaymentService.NOOP_LOGGER,
+  };
 
   constructor(dependencies: VerifyPaymentServiceDependencies) {
     this.investmentReader = dependencies.investmentReader;
     this.transactionRunner = dependencies.transactionRunner;
     this.config = dependencies.config;
     this.fetchImplementation = dependencies.fetchImplementation ?? fetch;
-    this.sleep = dependencies.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.sleep =
+      dependencies.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.logger = dependencies.logger ?? VerifyPaymentService.NOOP_LOGGER;
   }
 
-  async verifyPayment(
-    input: PaymentVerificationInput,
-  ): Promise<PaymentVerificationResult> {
+  async verifyPayment(input: PaymentVerificationInput): Promise<PaymentVerificationResult> {
     const investment = await this.investmentReader.findById(input.investmentId);
 
     if (!investment) {
@@ -104,7 +115,8 @@ export class VerifyPaymentService {
     if (investment.status === InvestmentStatus.CONFIRMED) {
       if (
         investment.transactionHash === input.stellarTxHash &&
-        investment.stellarOperationIndex === (input.operationIndex ?? investment.stellarOperationIndex)
+        investment.stellarOperationIndex ===
+          (input.operationIndex ?? investment.stellarOperationIndex)
       ) {
         return {
           outcome: "already_verified",
@@ -119,14 +131,14 @@ export class VerifyPaymentService {
       throw new ServiceError(
         "reconciliation_conflict",
         "Investment is already confirmed with a different Stellar payment.",
-        409,
+        409
       );
     }
 
     const matchedPayment = await this.fetchAndValidatePayment(
       input.stellarTxHash,
       investment.investmentAmount,
-      input.operationIndex,
+      input.operationIndex
     );
 
     return this.transactionRunner.runInTransaction(async (unitOfWork) => {
@@ -137,14 +149,14 @@ export class VerifyPaymentService {
       }
 
       const linkedTransactions = await unitOfWork.findTransactionsByInvestmentIdForUpdate(
-        lockedInvestment.id,
+        lockedInvestment.id
       );
 
       if (linkedTransactions.length > 1) {
         throw new ServiceError(
           "reconciliation_conflict",
           "Multiple transaction rows are linked to the same investment.",
-          409,
+          409
         );
       }
 
@@ -168,7 +180,7 @@ export class VerifyPaymentService {
         throw new ServiceError(
           "reconciliation_conflict",
           "Investment was confirmed by another transaction while verification was in progress.",
-          409,
+          409
         );
       }
 
@@ -182,7 +194,7 @@ export class VerifyPaymentService {
         throw new ServiceError(
           "reconciliation_conflict",
           "Transaction row is already linked to a different Stellar hash.",
-          409,
+          409
         );
       }
 
@@ -216,6 +228,18 @@ export class VerifyPaymentService {
       const savedTransaction = await unitOfWork.saveTransaction(transaction);
       await unitOfWork.saveInvestment(lockedInvestment);
 
+      // Structured log for accepted funding
+      this.logger.info("Investment funding accepted.", {
+        event: "investment_funding_accepted",
+        investment_id: lockedInvestment.id,
+        invoice_id: lockedInvestment.invoiceId,
+        wallet_id: lockedInvestment.investorId,
+        transaction_id: savedTransaction.id,
+        stellar_tx_hash: input.stellarTxHash,
+        operation_index: matchedPayment.operationIndex,
+        amount: lockedInvestment.investmentAmount,
+      });
+
       return {
         outcome: "verified" as const,
         investmentId: lockedInvestment.id,
@@ -230,30 +254,32 @@ export class VerifyPaymentService {
   private async fetchAndValidatePayment(
     stellarTxHash: string,
     expectedAmount: string,
-    operationIndex?: number,
+    operationIndex?: number
   ): Promise<PaymentMatch> {
-    const transaction = normalizeHorizonTransaction(await this.fetchJson<HorizonTransactionResponse>(
-      `/transactions/${stellarTxHash}`,
-    ));
+    const transaction = normalizeHorizonTransaction(
+      await this.fetchJson<HorizonTransactionResponse>(`/transactions/${stellarTxHash}`)
+    );
 
     if (!transaction.successful) {
-      throw new ServiceError(
-        "invalid_payment",
-        "The Stellar transaction was not successful.",
-        422,
-      );
+      throw new ServiceError("invalid_payment", "The Stellar transaction was not successful.", 422);
     }
 
     const operations = await this.fetchJson<HorizonOperationsResponse>(
-      `/transactions/${stellarTxHash}/operations?limit=200&order=asc`,
+      `/transactions/${stellarTxHash}/operations?limit=200&order=asc`
     );
 
     const paymentOperations = (operations._embedded?.records ?? [])
-      .map((operation, index) => ({
-        ...normalizeHorizonPayment(operation),
-        operationIndex: index,
-      }))
-      .filter((operation) => operation.type === "payment");
+      .map((operation, index) => {
+        const record = operation as unknown as Record<string, unknown>;
+        if (record?.type !== "payment") {
+          return null;
+        }
+        return {
+          ...normalizeHorizonPayment(operation),
+          operationIndex: index,
+        };
+      })
+      .filter((operation): operation is NonNullable<typeof operation> => operation !== null);
 
     const matchingOperations = paymentOperations.filter((operation) => {
       if (operationIndex !== undefined && operation.operationIndex !== operationIndex) {
@@ -265,11 +291,7 @@ export class VerifyPaymentService {
         operation.assetIssuer === this.config.usdcAssetIssuer &&
         operation.destination === this.config.escrowPublicKey &&
         operation.amount !== null &&
-        amountsWithinDelta(
-          operation.amount,
-          expectedAmount,
-          this.config.allowedAmountDelta,
-        )
+        amountsWithinDelta(operation.amount, expectedAmount, this.config.allowedAmountDelta)
       );
     });
 
@@ -277,7 +299,7 @@ export class VerifyPaymentService {
       throw new ServiceError(
         "invalid_payment",
         "No Stellar payment operation matched the expected asset, amount, and destination.",
-        422,
+        422
       );
     }
 
@@ -285,7 +307,7 @@ export class VerifyPaymentService {
       throw new ServiceError(
         "invalid_payment",
         "Multiple payment operations matched. Supply operationIndex to disambiguate.",
-        422,
+        422
       );
     }
 
@@ -316,7 +338,7 @@ export class VerifyPaymentService {
           throw new ServiceError(
             "transaction_not_found",
             "The Stellar transaction could not be found in Horizon.",
-            404,
+            404
           );
         }
 
@@ -328,7 +350,7 @@ export class VerifyPaymentService {
           throw new ServiceError(
             "horizon_request_failed",
             "Horizon rejected the verification request.",
-            502,
+            502
           );
         }
 
@@ -342,7 +364,7 @@ export class VerifyPaymentService {
           throw new ServiceError(
             "horizon_unavailable",
             "Horizon is temporarily unavailable. Please retry later.",
-            503,
+            503
           );
         }
 
@@ -353,7 +375,7 @@ export class VerifyPaymentService {
     throw new ServiceError(
       "horizon_unavailable",
       "Horizon is temporarily unavailable. Please retry later.",
-      503,
+      503
     );
   }
 }
@@ -372,7 +394,7 @@ class TypeOrmTransactionRunner implements PaymentTransactionRunner {
   constructor(private readonly dataSource: DataSource) {}
 
   runInTransaction<T>(
-    callback: (unitOfWork: PaymentVerificationUnitOfWork) => Promise<T>,
+    callback: (unitOfWork: PaymentVerificationUnitOfWork) => Promise<T>
   ): Promise<T> {
     return this.dataSource.transaction(async (manager) =>
       callback({
@@ -390,14 +412,14 @@ class TypeOrmTransactionRunner implements PaymentTransactionRunner {
           manager.getRepository(Transaction).save(transaction),
         createTransaction: (input: Partial<Transaction>) =>
           manager.getRepository(Transaction).create(input),
-      }),
+      })
     );
   }
 }
 
 export function createVerifyPaymentService(
   dataSource: DataSource,
-  config: PaymentVerificationConfig,
+  config: PaymentVerificationConfig
 ): VerifyPaymentService {
   return new VerifyPaymentService({
     investmentReader: new TypeOrmInvestmentReader(dataSource.getRepository(Investment)),
@@ -406,7 +428,7 @@ export function createVerifyPaymentService(
   });
 }
 
-class RetryableHorizonError extends Error {}
+export class RetryableHorizonError extends Error {}
 
 function ensureTrailingSlash(value: string): string {
   return value.endsWith("/") ? value : `${value}/`;
@@ -418,9 +440,8 @@ function amountsWithinDelta(actual: string, expected: string, delta: string): bo
   const expectedValue = toScaledBigInt(expected, scale);
   const deltaValue = toScaledBigInt(delta, scale);
 
-  const difference = actualValue >= expectedValue
-    ? actualValue - expectedValue
-    : expectedValue - actualValue;
+  const difference =
+    actualValue >= expectedValue ? actualValue - expectedValue : expectedValue - actualValue;
 
   return difference <= deltaValue;
 }

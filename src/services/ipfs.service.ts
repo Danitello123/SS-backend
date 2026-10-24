@@ -1,6 +1,7 @@
 import type { AppConfig } from "../config/env";
 import { ServiceError } from "../utils/service-error";
 import type { AppLogger } from "../observability/logger";
+import { withCorrelationHeaders } from "../observability/request-context";
 
 export interface IPFSUploadResult {
   hash: string;
@@ -70,16 +71,16 @@ export class IPFSService {
 
     try {
       const formData = new FormData();
-      const blob = new Blob([fileBuffer], { type: mimeType });
+      const blob = new Blob([new Uint8Array(fileBuffer)], { type: mimeType });
       formData.append("file", blob, filename);
 
       const response = await this.fetchImplementation(
         `${this.config.apiUrl}/pinning/pinFileToIPFS`,
         {
           method: "POST",
-          headers: {
+          headers: withCorrelationHeaders({
             Authorization: `Bearer ${this.config.jwt}`,
-          },
+          }),
           body: formData,
         }
       );
@@ -142,6 +143,97 @@ export class IPFSService {
         "ipfs_upload_error",
         `Failed to upload file to IPFS: ${errorMessage}`,
         500
+      );
+    }
+  }
+
+  /** Downloads a pinned file from the public gateway and returns its bytes. */
+  async fetchFile(cid: string): Promise<Buffer> {
+    const targetUrl = `${this.config.gatewayUrl}/ipfs/${cid}`;
+
+    try {
+      const response = await this.fetchImplementation(targetUrl, {
+        method: "GET",
+        headers: withCorrelationHeaders({}),
+      });
+
+      if (!response.ok) {
+        throw new Error(`IPFS gateway returned ${response.status}: ${response.statusText}`);
+      }
+
+      return Buffer.from(await response.arrayBuffer());
+    } catch (error) {
+      if (error instanceof ServiceError) throw error;
+
+      this.logger.error("Failed to fetch IPFS document", {
+        cid,
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      throw new ServiceError(
+        "ipfs_document_unavailable",
+        "The requested IPFS document is currently unavailable from the gateway. Please try again in a few moments.",
+        503
+      );
+    }
+  }
+
+  async generateSignedUrl(cid: string): Promise<string> {
+    const gatewayUrl = this.config.gatewayUrl;
+    // Pinata V3 uses /files/CID, but /ipfs/CID is often supported on gateways.
+    // We'll use /ipfs/CID as default for backward compatibility with v2 uploads.
+    const targetUrl = `${gatewayUrl}/ipfs/${cid}`;
+    const expires = this.config.gatewayTokenTtlSeconds;
+
+    this.logger.info("Generating signed IPFS gateway URL", {
+      cid,
+      expires_in_seconds: expires,
+    });
+
+    try {
+      const response = await this.fetchImplementation(
+        `${this.config.apiUrl}/v3/files/private/download_link`,
+        {
+          method: "POST",
+          headers: withCorrelationHeaders({
+            Authorization: `Bearer ${this.config.jwt}`,
+            "Content-Type": "application/json",
+          }),
+          body: JSON.stringify({
+            url: targetUrl,
+            expires,
+            date: Math.floor(Date.now() / 1000),
+            method: "GET",
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Pinata API returned ${response.status}: ${errorText}`);
+      }
+
+      const result = (await response.json()) as { data?: string; url?: string };
+      // Pinata V3 usually returns the url directly or inside a data wrapper
+      const signedUrl = result.data || result.url;
+
+      if (!signedUrl) {
+        throw new Error("Pinata API did not return a valid URL in response");
+      }
+
+      return signedUrl;
+    } catch (error) {
+      if (error instanceof ServiceError) throw error;
+
+      this.logger.error("Failed to generate signed IPFS URL", {
+        cid,
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      throw new ServiceError(
+        "ipfs_document_unavailable",
+        "The requested IPFS document is currently unavailable from the gateway. Please try again in a few moments.",
+        503
       );
     }
   }

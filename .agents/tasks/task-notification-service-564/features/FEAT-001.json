@@ -1,0 +1,28 @@
+{
+  "id": "FEAT-001",
+  "type": "feat",
+  "description": "Add missing NotificationType enum values and wire KYC status-change notifications. Adds KYC_STATUS_CHANGE and SECONDARY_MARKET_SOLD to the enum in src/types/enums.ts, then adds an optional notificationService dependency to KycService and fires createNotification after processWebhook commits a status change. Independent of FEAT-002.",
+  "status": "completed",
+  "steps": [
+    "1. In src/types/enums.ts, append two entries to the NotificationType enum: KYC_STATUS_CHANGE = 'kyc_status_change' and SECONDARY_MARKET_SOLD = 'secondary_market_sold'.",
+    "2. In src/services/kyc.service.ts, add two imports at the top: `import { NotificationService } from './notification.service'` (type-only is fine) and add NotificationType to the existing enums import from '../types/enums'.",
+    "3. In KycService constructor signature, add a fourth optional parameter: `private readonly notificationService?: NotificationService`. Constructor is: `constructor(private readonly dataSource: DataSource, private readonly webhookSecret: string, private readonly appLogger: AppLogger = logger, private readonly notificationService?: NotificationService)`.",
+    "4. In KycService.processWebhook(), after the `await this.dataSource.transaction(...)` call completes (but before the method returns), add a try/catch block that calls this.notificationService?.createNotification(payload.userId, notifType, title, message, { status: payload.status, reason: payload.reason ?? null }). Map KYCStatus.APPROVED → NotificationType.KYC_APPROVED with title 'KYC Approved' and message 'Your identity verification has been approved.'. Map KYCStatus.REJECTED → NotificationType.KYC_REJECTED with title 'KYC Status Updated' and message `Your KYC status has changed to ${payload.status}.`. Catch any error and call this.appLogger.warn('kyc.notification.failed', { user_id: payload.userId, error: ... }) — never rethrow.",
+    "5. In src/index.ts, update the KycService constructor call from `new KycService(dataSource, config.kyc.webhookSecret ?? '', logger)` to `new KycService(dataSource, config.kyc.webhookSecret ?? '', logger, notificationService)`. The notificationService variable is already defined earlier in bootstrap()."
+  ],
+  "acceptance_criteria": [
+    "src/types/enums.ts compiles and exports KYC_STATUS_CHANGE and SECONDARY_MARKET_SOLD values.",
+    "KycService constructor accepts an optional fourth parameter of type NotificationService.",
+    "After processWebhook commits, if notificationService is provided, createNotification is called with the user's id, the correct type (KYC_APPROVED or KYC_REJECTED), and appropriate title/message.",
+    "If createNotification throws, processWebhook still returns successfully and logs a warn.",
+    "All existing KYC tests pass without modification: `npx jest --testPathPattern kyc`.",
+    "npm run type-check passes with no errors."
+  ],
+  "verification": [
+    "npm run type-check  — must produce zero TypeScript errors",
+    "npx jest --testPathPattern kyc --forceExit  — all existing KYC tests pass",
+    "npx jest --testPathPattern notification --forceExit  — existing notification tests still pass"
+  ],
+  "blocked_reason": null,
+  "findings": "NotificationType enum now has KYC_STATUS_CHANGE and SECONDARY_MARKET_SOLD values. KycService constructor accepts optional fourth param notificationService?: NotificationService and fires createNotification after processWebhook commits. src/index.ts passes notificationService to KycService. Pre-existing failure in tests/notifications-endpoint.test.ts (SQLite3 package not installed in env) is unrelated to these changes and was failing before. FEAT-002 can rely on KYC_STATUS_CHANGE and SECONDARY_MARKET_SOLD being present in the enum."
+}

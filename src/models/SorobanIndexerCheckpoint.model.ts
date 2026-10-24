@@ -1,9 +1,9 @@
-import { Column, Entity, PrimaryColumn, UpdateDateColumn } from "typeorm";
+import { Column, Entity, UpdateDateColumn } from "typeorm";
 
 @Entity("soroban_indexer_checkpoints")
 export class SorobanIndexerCheckpoint {
-  @PrimaryColumn({ name: "indexer_id", type: "varchar", length: 512 })
-  indexerId!: string;
+  @Column({ name: "checkpoint_key", type: "varchar", length: 255, primary: true })
+  checkpointKey!: string;
 
   @Column({ name: "ledger_sequence", type: "bigint" })
   ledgerSequence!: string;
