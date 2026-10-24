@@ -1,8 +1,9 @@
-import { DataSource, EntityManager, MoreThan } from "typeorm";
+import { DataSource, EntityManager, In, MoreThan } from "typeorm";
 import { Decimal } from "decimal.js";
 import { SecondaryListing } from "../models/SecondaryListing.model";
 import { Invoice } from "../models/Invoice.model";
 import { Investment } from "../models/Investment.model";
+import { SettlementIntent, SettlementIntentStatus } from "../models/SettlementIntent.model";
 import { ListingStatus, InvoiceStatus, InvestmentStatus, NotificationType } from "../types/enums";
 import { ServiceError } from "../utils/service-error";
 import { logger } from "../observability/logger";
@@ -92,7 +93,11 @@ export class SecondaryMarketService {
       }
 
       if (priceDecimal.lte(0)) {
-        throw new ServiceError("INVALID_PRICE", "Price per fraction must be greater than zero", 400);
+        throw new ServiceError(
+          "INVALID_PRICE",
+          "Price per fraction must be greater than zero",
+          400
+        );
       }
 
       if (new Date(expiresAt) <= new Date()) {
@@ -100,7 +105,10 @@ export class SecondaryMarketService {
       }
 
       // Get invoice
-      const invoice = await manager.findOne(Invoice, { where: { id: invoiceId } });
+      const invoice = await manager.findOne(Invoice, {
+        where: { id: invoiceId },
+        lock: { mode: "pessimistic_write" },
+      });
       if (!invoice) {
         throw new ServiceError("INVOICE_NOT_FOUND", "Invoice not found", 404);
       }
@@ -110,6 +118,23 @@ export class SecondaryMarketService {
           "INVALID_INVOICE_STATUS",
           "Only funded invoices can be listed on secondary market",
           400
+        );
+      }
+      const settlementIntent = await manager.findOne(SettlementIntent, {
+        where: {
+          invoiceId,
+          status: In([
+            SettlementIntentStatus.PREPARED,
+            SettlementIntentStatus.SUBMITTING,
+            SettlementIntentStatus.DISTRIBUTED,
+          ]),
+        },
+      });
+      if (settlementIntent) {
+        throw new ServiceError(
+          "SETTLEMENT_IN_PROGRESS",
+          "Invoice settlement is in progress; holdings cannot be listed",
+          409
         );
       }
 
@@ -195,7 +220,10 @@ export class SecondaryMarketService {
   async getListings(
     filters: ListingFilters = {},
     pagination: PaginationOptions = { page: 1, limit: 20 }
-  ): Promise<{ data: ListingResult[]; meta: { total: number; page: number; limit: number; totalPages: number } }> {
+  ): Promise<{
+    data: ListingResult[];
+    meta: { total: number; page: number; limit: number; totalPages: number };
+  }> {
     const repository = this.dataSource.getRepository(SecondaryListing);
     const queryBuilder = repository
       .createQueryBuilder("listing")
@@ -350,6 +378,23 @@ export class SecondaryMarketService {
           400
         );
       }
+      const settlementIntent = await manager.findOne(SettlementIntent, {
+        where: {
+          invoiceId: invoice.id,
+          status: In([
+            SettlementIntentStatus.PREPARED,
+            SettlementIntentStatus.SUBMITTING,
+            SettlementIntentStatus.DISTRIBUTED,
+          ]),
+        },
+      });
+      if (settlementIntent) {
+        throw new ServiceError(
+          "SETTLEMENT_IN_PROGRESS",
+          "Invoice settlement is in progress; holdings cannot be transferred",
+          409
+        );
+      }
 
       // Determine quantity to buy (default to full listing quantity)
       const buyQuantity = quantity ? new Decimal(quantity) : new Decimal(listing.quantity);
@@ -412,7 +457,9 @@ export class SecondaryMarketService {
               .toDecimalPlaces(4);
 
         investment.investmentAmount = sourceAmount.minus(transferredAmount).toFixed(4);
-        investment.expectedReturn = sourceExpectedReturn.minus(transferredExpectedReturn).toFixed(4);
+        investment.expectedReturn = sourceExpectedReturn
+          .minus(transferredExpectedReturn)
+          .toFixed(4);
         if (new Decimal(investment.investmentAmount).isZero()) {
           investment.status = InvestmentStatus.CANCELLED;
         }
@@ -461,7 +508,9 @@ export class SecondaryMarketService {
         // Partial sale - reduce quantity
         const remainingQuantity = new Decimal(listing.quantity).minus(buyQuantity);
         listing.quantity = remainingQuantity.toFixed(4);
-        listing.totalPrice = remainingQuantity.times(new Decimal(listing.pricePerFraction)).toFixed(4);
+        listing.totalPrice = remainingQuantity
+          .times(new Decimal(listing.pricePerFraction))
+          .toFixed(4);
         await manager.save(listing);
       }
 
@@ -514,7 +563,11 @@ export class SecondaryMarketService {
   /**
    * Cancel a listing (restricted to listing owner only).
    */
-  async cancelListing(listingId: string, sellerWallet: string, reason?: string): Promise<SecondaryListing> {
+  async cancelListing(
+    listingId: string,
+    sellerWallet: string,
+    reason?: string
+  ): Promise<SecondaryListing> {
     const repository = this.dataSource.getRepository(SecondaryListing);
     const listing = await repository.findOne({ where: { id: listingId } });
 
