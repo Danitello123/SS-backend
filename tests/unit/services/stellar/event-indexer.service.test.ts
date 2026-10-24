@@ -27,11 +27,9 @@ describe("EventIndexerService (Issue #135)", () => {
       create: jest.fn().mockImplementation((data) => data),
       save: jest.fn().mockImplementation((data) => Promise.resolve(data)),
       update: jest.fn().mockResolvedValue({ affected: 1 }),
-      findOne: jest
-        .fn()
-        .mockImplementation(({ where }) =>
-          Promise.resolve(where?.eventId ? null : { ledgerSequence: "500" })
-        ),
+      findOne: jest.fn().mockImplementation(({ where }) =>
+        Promise.resolve(where?.eventId ? null : { ledgerSequence: "500" }),
+      ),
     };
 
     mockCheckpointRepo = {
@@ -144,6 +142,41 @@ describe("EventIndexerService (Issue #135)", () => {
           filters: [{ type: "contract", contractIds: [ESCROW_CONTRACT_ID] }],
         })
       );
+    });
+
+    it("should follow RPC cursors until every event page has been fetched", async () => {
+      const eventTopic = nativeToScVal("create_escrow", { type: "symbol" }).toXDR("base64");
+      const invoiceTopic = nativeToScVal("INV-100", { type: "string" }).toXDR("base64");
+      mockRpcServer.getEvents
+        .mockResolvedValueOnce({
+          events: [{
+            id: "evt-page-1",
+            contractId: ESCROW_CONTRACT_ID,
+            ledger: 2000,
+            ledgerClosedAt: "2026-08-25T12:05:00Z",
+            txHash: "tx-page-1",
+            topic: [eventTopic, invoiceTopic],
+            value: null,
+            inSuccessfulContractCall: true,
+          }],
+          cursor: "page-2",
+        })
+        .mockResolvedValueOnce({ events: [], cursor: undefined });
+
+      const service = new EventIndexerService({
+        contractIds: [ESCROW_CONTRACT_ID],
+        server: mockRpcServer,
+        logger: mockLogger,
+      });
+
+      const events = await service.pollContractEvents({ startLedger: 2000, limit: 1 });
+
+      expect(events).toHaveLength(1);
+      expect(mockRpcServer.getEvents).toHaveBeenCalledTimes(2);
+      expect(mockRpcServer.getEvents).toHaveBeenLastCalledWith(
+        expect.objectContaining({ cursor: "page-2" }),
+      );
+      expect(mockRpcServer.getEvents.mock.calls[1][0]).not.toHaveProperty("startLedger");
     });
   });
 
