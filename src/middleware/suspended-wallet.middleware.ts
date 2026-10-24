@@ -10,6 +10,21 @@ import { extractBearerToken } from "./auth.middleware";
 /** Returns true when the wallet belongs to a suspended account. */
 export type SuspensionLookup = (stellarAddress: string) => Promise<boolean>;
 
+const suspendedWallets = new Set<string>();
+
+export function markWalletSuspended(wallet: string): void {
+  suspendedWallets.add(wallet);
+}
+
+export function unmarkWalletSuspended(wallet: string): void {
+  suspendedWallets.delete(wallet);
+}
+
+export function isWalletSuspended(stellarAddress?: string | null): boolean {
+  if (!stellarAddress) return false;
+  return suspendedWallets.has(stellarAddress);
+}
+
 export function createDataSourceSuspensionLookup(dataSource: DataSource): SuspensionLookup {
   return async (stellarAddress) => {
     if (!dataSource.isInitialized) return false;

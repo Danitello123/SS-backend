@@ -4,8 +4,9 @@ import { ServiceError } from "../utils/service-error";
 import { logger } from "../observability/logger";
 import Redis from "ioredis";
 
-const FEE_SCHEDULE_CACHE_KEY = "fee_schedule:current";
-const FEE_SCHEDULE_CACHE_TTL = 3600; // 1 hour
+export const FEE_SCHEDULE_CACHE_KEY = "fee_schedule:current";
+export const FEE_SCHEDULE_VERSION_KEY = "fee_schedule:version";
+export const FEE_SCHEDULE_CACHE_TTL = 3600; // 1 hour
 
 export interface FeeScheduleDTO {
   investmentFeeBps: number;
@@ -68,6 +69,123 @@ export class FeeScheduleService {
   }
 
   /**
+   * Parses and validates cached schedule payload.
+   * Safely returns null on corrupt, malformed, or invalid entries to trigger fallback to DB.
+   */
+  private parseCachedSchedule(cached: string): { version?: number; data: FeeScheduleWithMeta } | null {
+    try {
+      const parsed = JSON.parse(cached);
+      if (!parsed || typeof parsed !== "object") {
+        return null;
+      }
+
+      let version: number | undefined;
+      let rawData: Record<string, unknown>;
+
+      if ("data" in parsed && parsed.data && typeof parsed.data === "object") {
+        version = typeof parsed.version === "number" ? parsed.version : undefined;
+        rawData = parsed.data as Record<string, unknown>;
+      } else {
+        // Support legacy raw FeeScheduleWithMeta cache format
+        rawData = parsed as Record<string, unknown>;
+      }
+
+      if (
+        typeof rawData.investmentFeeBps !== "number" ||
+        typeof rawData.settlementFeeBps !== "number" ||
+        typeof rawData.platformFeeBps !== "number" ||
+        typeof rawData.secondaryMarketFeeBps !== "number" ||
+        isNaN(rawData.investmentFeeBps) ||
+        isNaN(rawData.settlementFeeBps) ||
+        isNaN(rawData.platformFeeBps) ||
+        isNaN(rawData.secondaryMarketFeeBps)
+      ) {
+        return null;
+      }
+
+      const effectiveFrom = new Date(rawData.effectiveFrom as string | number | Date);
+      if (isNaN(effectiveFrom.getTime())) {
+        return null;
+      }
+
+      const effectiveUntil = rawData.effectiveUntil ? new Date(rawData.effectiveUntil as string | number | Date) : null;
+      if (rawData.effectiveUntil && isNaN(effectiveUntil!.getTime())) {
+        return null;
+      }
+
+      return {
+        version,
+        data: {
+          investmentFeeBps: rawData.investmentFeeBps,
+          settlementFeeBps: rawData.settlementFeeBps,
+          platformFeeBps: rawData.platformFeeBps,
+          secondaryMarketFeeBps: rawData.secondaryMarketFeeBps,
+          effectiveFrom,
+          effectiveUntil,
+          isActive: Boolean(rawData.isActive),
+        },
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Guarded cache write using an atomic Redis Lua script.
+   * Ensures an older reader (e.g. delayed by event-loop or network lag)
+   * cannot overwrite a newer schedule or repopulate after invalidation.
+   */
+  async guardedCacheRefill(
+    version: number,
+    dto: FeeScheduleWithMeta
+  ): Promise<boolean> {
+    if (!this.redisClient) {
+      return false;
+    }
+
+    const payload = JSON.stringify({
+      version,
+      data: dto,
+    });
+
+    const script = `
+local current_ver = redis.call('get', KEYS[2])
+if current_ver and tonumber(ARGV[2]) < tonumber(current_ver) then
+  return 0
+end
+redis.call('setex', KEYS[1], ARGV[1], ARGV[3])
+if not current_ver or tonumber(ARGV[2]) > tonumber(current_ver) then
+  redis.call('set', KEYS[2], ARGV[2])
+end
+return 1
+`;
+
+    try {
+      const result = await this.redisClient.eval(
+        script,
+        2,
+        FEE_SCHEDULE_CACHE_KEY,
+        FEE_SCHEDULE_VERSION_KEY,
+        FEE_SCHEDULE_CACHE_TTL,
+        String(version),
+        payload
+      );
+      const success = Number(result) === 1;
+      if (success) {
+        logger.debug("fee_schedule.cache_refill_success", { version });
+      } else {
+        logger.warn("fee_schedule.cache_refill_rejected_stale", { version });
+      }
+      return success;
+    } catch (error) {
+      logger.warn("fee_schedule.cache_set_error", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return false;
+    }
+  }
+
+  /**
    * Gets the current active fee schedule from cache or database.
    */
   async getCurrentFeeSchedule(): Promise<FeeScheduleWithMeta> {
@@ -76,8 +194,12 @@ export class FeeScheduleService {
       try {
         const cached = await this.redisClient.get(FEE_SCHEDULE_CACHE_KEY);
         if (cached) {
-          logger.debug("fee_schedule.cache_hit");
-          return JSON.parse(cached) as FeeScheduleWithMeta;
+          const parsed = this.parseCachedSchedule(cached);
+          if (parsed) {
+            logger.debug("fee_schedule.cache_hit", { version: parsed.version });
+            return parsed.data;
+          }
+          logger.warn("fee_schedule.cache_corrupted", { cached });
         }
       } catch (error) {
         logger.warn("fee_schedule.cache_error", {
@@ -107,15 +229,9 @@ export class FeeScheduleService {
       isActive: schedule.isActive,
     };
 
-    // Cache the result
+    // Cache the result using guarded write bound to committed schedule version
     if (this.redisClient) {
-      try {
-        await this.redisClient.setex(FEE_SCHEDULE_CACHE_KEY, FEE_SCHEDULE_CACHE_TTL, JSON.stringify(dto));
-      } catch (error) {
-        logger.warn("fee_schedule.cache_set_error", {
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
+      await this.guardedCacheRefill(schedule.id, dto);
     }
 
     return dto;
@@ -231,8 +347,8 @@ export class FeeScheduleService {
       return savedSchedule;
     });
 
-    // Invalidate cache
-    await this.invalidateCache();
+    // Invalidate cache with the newly committed schedule version
+    await this.invalidateCache(result.id);
 
     return {
       investmentFeeBps: result.investmentFeeBps,
@@ -295,12 +411,21 @@ export class FeeScheduleService {
 
   /**
    * Invalidates the fee schedule cache.
+   * If a committedVersion is provided, sets the version guard so older
+   * concurrent readers are rejected when attempting to refill.
    */
-  private async invalidateCache(): Promise<void> {
+  async invalidateCache(committedVersion?: number): Promise<void> {
     if (this.redisClient) {
       try {
-        await this.redisClient.del(FEE_SCHEDULE_CACHE_KEY);
-        logger.debug("fee_schedule.cache_invalidated");
+        const pipeline = this.redisClient.pipeline();
+        if (committedVersion !== undefined) {
+          pipeline.set(FEE_SCHEDULE_VERSION_KEY, String(committedVersion));
+        } else {
+          pipeline.incr(FEE_SCHEDULE_VERSION_KEY);
+        }
+        pipeline.del(FEE_SCHEDULE_CACHE_KEY);
+        await pipeline.exec();
+        logger.debug("fee_schedule.cache_invalidated", { committedVersion });
       } catch (error) {
         logger.warn("fee_schedule.cache_invalidation_error", {
           error: error instanceof Error ? error.message : String(error),

@@ -2,9 +2,12 @@ import { Router, Request, Response, NextFunction } from "express";
 import { logger } from "../../observability/logger";
 import type { WaitlistService } from "../../services/waitlist.service";
 import { AppError } from "../../utils/http-error";
+import type { AuthService } from "../../services/auth.service";
 
 export function createWaitlistRouter(
   waitlistService: WaitlistService,
+  _authService: AuthService,
+  _notificationService?: unknown
 ) {
   const router = Router();
 
