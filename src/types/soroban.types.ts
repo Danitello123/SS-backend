@@ -55,12 +55,12 @@ export interface DecodedSorobanEvent {
   contractId: string;
   ledger: number;
   ledgerClosedAt: string;
+  occurredAt?: Date;
   txHash: string;
   topic: string;
   topics: unknown[];
   data: unknown;
   inSuccessfulContractCall: boolean;
-  occurredAt?: Date;
 }
 
 export interface SimulateTransactionResult {

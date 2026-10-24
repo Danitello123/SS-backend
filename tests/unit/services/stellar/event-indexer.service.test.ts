@@ -97,6 +97,7 @@ describe("EventIndexerService (Issue #135)", () => {
       expect(decoded.id).toBe("evt-001");
       expect(decoded.contractId).toBe(ESCROW_CONTRACT_ID);
       expect(decoded.ledger).toBe(1050);
+      expect(decoded.occurredAt).toEqual(new Date(rawEvent.ledgerClosedAt));
       expect(decoded.topic).toBe("fund_escrow");
       expect(decoded.topics).toEqual(["fund_escrow", "INV-2026-001"]);
       expect(BigInt(decoded.data as any)).toBe(100_000n);

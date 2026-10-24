@@ -159,12 +159,14 @@ export class EventIndexerService {
         : typeof rawRecord.pagingToken === "string"
           ? rawRecord.pagingToken
           : rawEvent.id;
+    const occurredAt = new Date(rawEvent.ledgerClosedAt);
 
     return {
       id: rawEvent.id,
       contractId: contractIdStr,
       ledger: Number(rawEvent.ledger),
       ledgerClosedAt: rawEvent.ledgerClosedAt,
+      occurredAt: Number.isNaN(occurredAt.getTime()) ? undefined : occurredAt,
       txHash,
       topic: primaryTopic,
       topics: decodedTopics,

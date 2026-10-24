@@ -313,7 +313,7 @@ export function createAdminRouter({
   if (_waitlistService) {
     router.use(
       "/waitlist",
-      createWaitlistRouter(dataSource, _waitlistService, authService, _notificationService)
+      createWaitlistRouter(_waitlistService, authService, _notificationService)
     );
   }
 
