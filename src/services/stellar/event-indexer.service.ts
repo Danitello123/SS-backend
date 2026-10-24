@@ -1,18 +1,16 @@
-import { SorobanRpc, scValToNative, xdr } from "stellar-sdk";
 import { createHash } from "crypto";
+import { SorobanRpc, scValToNative, xdr } from "stellar-sdk";
 import type { DataSource, Repository } from "typeorm";
-import { In, type DataSource, type Repository } from "typeorm";
 import type { AppLogger } from "../../observability/logger";
 import { logger as globalLogger } from "../../observability/logger";
-import { SorobanEventLog } from "../../models/SorobanEventLog.model";
-import { SorobanIndexerCheckpoint } from "../../models/SorobanIndexerCheckpoint.model";
-import { Invoice } from "../../models/Invoice.model";
 import { Investment } from "../../models/Investment.model";
+import { Invoice } from "../../models/Invoice.model";
+import { SorobanEventLog } from "../../models/SorobanEventLog.model";
 import { SorobanIndexerCheckpoint } from "../../models/SorobanIndexerCheckpoint.model";
 import { InvestmentStatus, InvoiceStatus } from "../../types/enums";
 import type { DecodedSorobanEvent } from "../../types/soroban.types";
-import type { InvestorInsightsService } from "../investor-insights.service";
 import type { ContractEventBus } from "../contract-event-bus.service";
+import type { InvestorInsightsService } from "../investor-insights.service";
 
 export interface EventIndexerServiceDependencies {
   contractIds: string[];
@@ -26,11 +24,6 @@ export interface EventIndexerServiceDependencies {
   investmentRepository?: Repository<Investment>;
   investorInsightsService?: InvestorInsightsService;
   lagAlertThresholdLedgers?: number;
-  /**
-   * Optional fan-out for read-model projections derived from contract events
-   * (ACL, curve migrations, atomic swaps, key config). Omitting it preserves
-   * the previous behaviour exactly.
-   */
   eventBus?: ContractEventBus;
 }
 
@@ -50,18 +43,16 @@ export class EventIndexerService {
   private readonly invoiceRepository?: Repository<Invoice>;
   private readonly investmentRepository?: Repository<Investment>;
   private readonly investorInsightsService?: InvestorInsightsService;
-  private readonly checkpointRepository?: Repository<SorobanIndexerCheckpoint>;
   private readonly checkpointId: string;
+  private readonly lagAlertThresholdLedgers: number;
+  private readonly eventBus?: ContractEventBus;
+
   private intervalHandle: NodeJS.Timeout | null = null;
   private lastIndexedLedger = 0;
   private latestObservedLedger = 0;
-  private polling = false;
-  private readonly lagAlertThresholdLedgers: number;
-  private readonly eventBus?: ContractEventBus;
-  private intervalHandle: NodeJS.Timeout | null = null;
-  private lastIndexedLedger = 0;
   private latestLedgerSeen = 0;
   private nextCursor?: string;
+  private polling = false;
   private pollInFlight = false;
   private lagAlertActive = false;
 
@@ -69,9 +60,7 @@ export class EventIndexerService {
     if (!dependencies.contractIds || dependencies.contractIds.length === 0) {
       throw new Error("At least one contractId is required.");
     }
-    if (dependencies.contractIds.length > 25) {
-      throw new Error("Soroban RPC supports at most 25 contract IDs per event indexer.");
-    }
+
     this.contractIds = dependencies.contractIds;
     this.checkpointId = createHash("sha256")
       .update([...dependencies.contractIds].sort().join(","))
@@ -114,15 +103,12 @@ export class EventIndexerService {
     } else if (this.dataSource) {
       this.investmentRepository = this.dataSource.getRepository(Investment);
     }
-
-    if (this.dataSource) {
-      this.checkpointRepository = this.dataSource.getRepository(SorobanIndexerCheckpoint);
-    }
   }
 
-  /**
-   * Decodes a raw Soroban event from RPC getEvents response into structured JS object.
-   */
+  private getCheckpointKey(): string {
+    return this.contractIds[0] ?? this.checkpointId;
+  }
+
   public decodeEvent(rawEvent: SorobanRpc.Api.GetEventsResponse["events"][0]): DecodedSorobanEvent {
     const decodedTopics: unknown[] = [];
 
@@ -162,8 +148,7 @@ export class EventIndexerService {
     const contractIdStr = rawEvent.contractId
       ? typeof rawRecord.contractId === "string"
         ? (rawRecord.contractId as string)
-        : typeof (rawEvent.contractId as unknown as { contractId?: () => string }).contractId ===
-            "function"
+        : typeof (rawEvent.contractId as unknown as { contractId?: () => string }).contractId === "function"
           ? (rawEvent.contractId as unknown as { contractId: () => string }).contractId()
           : String(rawEvent.contractId)
       : "";
@@ -188,9 +173,6 @@ export class EventIndexerService {
     };
   }
 
-  /**
-   * Polls contract events from Soroban RPC matching configured contract IDs.
-   */
   public async pollContractEvents(options: PollEventsOptions = {}): Promise<DecodedSorobanEvent[]> {
     const startLedger = options.startLedger ?? (await this.getLastIndexedLedger()) + 1;
 
@@ -215,21 +197,22 @@ export class EventIndexerService {
       let cursor = options.cursor;
       const seenCursors = new Set<string>();
       const decodedEvents: DecodedSorobanEvent[] = [];
+
       do {
         const params: SorobanRpc.Server.GetEventsRequest = { ...requestParams };
         if (cursor) {
           params.cursor = cursor;
           delete params.startLedger;
         }
+
         const response = await this.rpcServer.getEvents(params);
-        const responseWithCursor = response as SorobanRpc.Api.GetEventsResponse & {
-          cursor?: string;
-        };
-        this.latestObservedLedger = Math.max(
-          this.latestObservedLedger,
-          response.latestLedger ?? 0,
-        );
+        const responseWithCursor = response as SorobanRpc.Api.GetEventsResponse & { cursor?: string };
+
+        this.latestObservedLedger = Math.max(this.latestObservedLedger, response.latestLedger ?? 0);
+        this.latestLedgerSeen = Math.max(this.latestLedgerSeen, response.latestLedger ?? 0);
+
         decodedEvents.push(...(response.events ?? []).map((event) => this.decodeEvent(event)));
+
         const nextCursor = responseWithCursor.cursor;
         if (!nextCursor || nextCursor === cursor) break;
         if (seenCursors.has(nextCursor)) {
@@ -238,14 +221,6 @@ export class EventIndexerService {
         seenCursors.add(nextCursor);
         cursor = nextCursor;
       } while (cursor);
-      if (options.cursor) {
-        requestParams.cursor = options.cursor;
-      }
-
-      const response = await this.rpcServer.getEvents(requestParams);
-      const events = response.events || [];
-      this.latestLedgerSeen = Math.max(this.latestLedgerSeen, response.latestLedger ?? 0);
-      this.nextCursor = events.length > 0 ? events[events.length - 1].id : undefined;
 
       const lastIndexedLedger = await this.getLastIndexedLedger();
       const lag = Math.max(0, this.latestLedgerSeen - lastIndexedLedger);
@@ -260,8 +235,6 @@ export class EventIndexerService {
       } else if (lag < this.lagAlertThresholdLedgers) {
         this.lagAlertActive = false;
       }
-
-      const decodedEvents = events.map((e) => this.decodeEvent(e));
 
       this.logger.info("Polled Soroban contract events", {
         startLedger,
@@ -278,9 +251,6 @@ export class EventIndexerService {
     }
   }
 
-  /**
-   * Ingests, persists, and reconciles a list of decoded Soroban events into the database.
-   */
   public async ingestEvents(events: DecodedSorobanEvent[]): Promise<number> {
     let processedCount = 0;
     let highestProcessedLedger = this.lastIndexedLedger;
@@ -291,8 +261,13 @@ export class EventIndexerService {
         const existingLog = this.eventLogRepository
           ? await this.eventLogRepository.findOne({ where: { eventId } })
           : null;
+
         if (existingLog?.processed) {
           highestProcessedLedger = Math.max(highestProcessedLedger, event.ledger);
+          processedCount++;
+          continue;
+        }
+
         const existing = this.eventLogRepository
           ? await this.eventLogRepository.findOne({
               where: { contractId: event.contractId, eventId: event.id },
@@ -311,11 +286,6 @@ export class EventIndexerService {
             const logEntry = this.eventLogRepository.create({
               eventId,
               contractId: event.contractId,
-          const logEntry =
-            existing ??
-            this.eventLogRepository.create({
-              contractId: event.contractId,
-              eventId: event.id,
               ledgerSequence: event.ledger.toString(),
               topic: event.topic,
               txHash: event.txHash,
@@ -330,39 +300,18 @@ export class EventIndexerService {
           }
         }
 
-        // Apply state transitions based on event topics
         await this.applyEventStateTransition(event);
         await this.investorInsightsService?.processEvent(event);
 
-        if (this.eventLogRepository) {
-          await this.eventLogRepository.update(
-            { eventId },
-            { processed: true },
-          );
-        }
-
-        highestProcessedLedger = Math.max(highestProcessedLedger, event.ledger);
-          if (!existing) await this.eventLogRepository.save(logEntry);
-        }
-
-        if (event.inSuccessfulContractCall) {
-          await this.applyEventStateTransition(event);
-        }
-
-        // Fan out to the registered read-model projections (ACL, curve
-        // migrations, swaps, key config). Failures inside a handler are logged
-        // by the bus and never abort ingestion of the remaining events.
         if (this.eventBus) {
           await this.eventBus.dispatch(event);
         }
 
         if (this.eventLogRepository) {
-          await this.eventLogRepository.update(
-            { contractId: event.contractId, eventId: event.id },
-            { processed: true }
-          );
+          await this.eventLogRepository.update({ eventId }, { processed: true });
         }
 
+        highestProcessedLedger = Math.max(highestProcessedLedger, event.ledger);
         processedCount++;
       } catch (err) {
         this.logger.error("Error processing Soroban event", {
@@ -377,12 +326,14 @@ export class EventIndexerService {
     this.lastIndexedLedger = highestProcessedLedger;
     const checkpointLedger = Math.max(highestProcessedLedger, this.latestObservedLedger);
     if (checkpointLedger > 0 && this.checkpointRepository) {
-      await this.checkpointRepository.save(this.checkpointRepository.create({
-        indexerId: this.checkpointId,
+      const checkpoint = this.checkpointRepository.create({
+        checkpointKey: this.getCheckpointKey(),
         ledgerSequence: checkpointLedger.toString(),
-      }));
+      });
+      await this.checkpointRepository.save(checkpoint);
       this.lastIndexedLedger = checkpointLedger;
     }
+
     return processedCount;
   }
 
@@ -391,67 +342,29 @@ export class EventIndexerService {
       throw new Error("ledgerSequence must be a non-negative integer.");
     }
 
-    const checkpointKey = this.getCheckpointKey();
     if (this.checkpointRepository) {
-      const checkpoint = await this.checkpointRepository.findOne({ where: { checkpointKey } });
+      const checkpoint = await this.checkpointRepository.findOne({
+        where: { checkpointKey: this.getCheckpointKey() },
+      });
+
       const durableLedger = Number(checkpoint?.ledgerSequence ?? 0);
       if (ledgerSequence <= durableLedger) return;
+
       await this.checkpointRepository.save(
         this.checkpointRepository.create({
           ...(checkpoint ?? {}),
-          checkpointKey,
+          checkpointKey: this.getCheckpointKey(),
           ledgerSequence: ledgerSequence.toString(),
-        })
+        }),
       );
-    } else if (ledgerSequence <= this.lastIndexedLedger) {
-      return;
     }
 
     this.lastIndexedLedger = Math.max(this.lastIndexedLedger, ledgerSequence);
   }
 
-  /**
-   * Applies domain state updates to Invoice / Investment models based on on-chain event topics.
-   */
   private async applyEventStateTransition(event: DecodedSorobanEvent): Promise<void> {
     const topic = event.topic.toLowerCase();
-    const investment = await this.findInvestmentForEvent(event);
-    const invoiceId = this.extractInvoiceId(event);
 
-    if (
-      investment &&
-      ["fund_escrow", "fund", "investment_funded", "investment_confirmed"].includes(topic) &&
-      investment.status === InvestmentStatus.PENDING
-    ) {
-      investment.status = InvestmentStatus.CONFIRMED;
-      investment.transactionHash = event.txHash;
-      investment.fundingBlock = String(event.ledger);
-      await this.investmentRepository?.save(investment);
-    }
-
-    if (
-      invoiceId &&
-      ["settle_escrow", "settle", "payment_recorded", "payment", "investment_settled"].includes(
-        topic
-      ) &&
-      this.investmentRepository
-    ) {
-      await this.investmentRepository.update(
-        { invoiceId, status: In([InvestmentStatus.PENDING, InvestmentStatus.CONFIRMED]) },
-        { status: InvestmentStatus.SETTLED }
-      );
-    }
-
-    if (
-      investment &&
-      ["settle_escrow", "settle", "investment_settled"].includes(topic) &&
-      investment.status !== InvestmentStatus.SETTLED
-    ) {
-      investment.status = InvestmentStatus.SETTLED;
-      await this.investmentRepository?.save(investment);
-    }
-
-    // Event: "create_escrow"
     if (topic === "create_escrow") {
       const invoiceId = this.extractInvoiceId(event);
       if (invoiceId && this.invoiceRepository) {
@@ -463,7 +376,6 @@ export class EventIndexerService {
       }
     }
 
-    // Event: "fund_escrow" or "fund"
     if (topic === "fund_escrow" || topic === "fund") {
       const invoiceId = this.extractInvoiceId(event);
       if (invoiceId && this.invoiceRepository) {
@@ -475,7 +387,6 @@ export class EventIndexerService {
       }
     }
 
-    // Event: "payment_recorded" or "payment"
     if (topic === "payment_recorded" || topic === "payment") {
       const invoiceId = this.extractInvoiceId(event);
       if (invoiceId && this.invoiceRepository) {
@@ -487,7 +398,6 @@ export class EventIndexerService {
       }
     }
 
-    // Event: "settle_escrow" or "settle"
     if (topic === "settle_escrow" || topic === "settle") {
       const invoiceId = this.extractInvoiceId(event);
       if (invoiceId && this.invoiceRepository) {
@@ -498,41 +408,19 @@ export class EventIndexerService {
         }
       }
     }
-  }
 
-  private async findInvestmentForEvent(event: DecodedSorobanEvent): Promise<Investment | null> {
-    if (!this.investmentRepository) return null;
-
-    const data =
-      event.data && typeof event.data === "object" ? (event.data as Record<string, unknown>) : {};
-    const investmentId = this.stringValue(data.investment_id ?? data.investmentId);
-    if (investmentId) {
-      const byId = await this.investmentRepository.findOne({ where: { id: investmentId } });
-      if (byId) return byId;
+    if (topic === "investment_funded") {
+      const investmentId = this.extractInvestmentId(event);
+      if (investmentId && this.investmentRepository) {
+        const investment = await this.investmentRepository.findOne({ where: { id: investmentId } });
+        if (investment) {
+          investment.status = InvestmentStatus.CONFIRMED;
+          investment.transactionHash = event.txHash;
+          investment.fundingBlock = String(event.ledger);
+          await this.investmentRepository.save(investment);
+        }
+      }
     }
-
-    const byTransaction = await this.investmentRepository.findOne({
-      where: { transactionHash: event.txHash },
-    });
-    if (byTransaction) return byTransaction;
-
-    const invoiceId = this.extractInvoiceId(event);
-    const wallet = this.stringValue(
-      data.investor ?? data.investor_wallet ?? data.investorWallet ?? event.topics[2]
-    );
-    if (invoiceId && wallet) {
-      return this.investmentRepository.findOne({ where: { invoiceId, investorWallet: wallet } });
-    }
-
-    return null;
-  }
-
-  private stringValue(value: unknown): string | null {
-    return typeof value === "string" && value.length > 0 ? value : null;
-  }
-
-  private getCheckpointKey(): string {
-    return this.contractIds.slice().sort().join(",");
   }
 
   private extractInvoiceId(event: DecodedSorobanEvent): string | null {
@@ -541,17 +429,23 @@ export class EventIndexerService {
     }
     if (event.data && typeof event.data === "object") {
       const dataObj = event.data as Record<string, unknown>;
-      const invoiceId = dataObj.invoice_id ?? dataObj.invoiceId;
-      if (invoiceId !== undefined && invoiceId !== null) {
-        return String(invoiceId);
+      if ("invoice_id" in dataObj) {
+        return String(dataObj.invoice_id);
       }
     }
     return null;
   }
 
-  /**
-   * Retrieves the last processed ledger sequence number.
-   */
+  private extractInvestmentId(event: DecodedSorobanEvent): string | null {
+    if (event.data && typeof event.data === "object") {
+      const dataObj = event.data as Record<string, unknown>;
+      if ("investment_id" in dataObj) {
+        return String(dataObj.investment_id);
+      }
+    }
+    return null;
+  }
+
   public async getLastIndexedLedger(): Promise<number> {
     if (this.lastIndexedLedger > 0) {
       return this.lastIndexedLedger;
@@ -561,71 +455,26 @@ export class EventIndexerService {
       const checkpoint = await this.checkpointRepository.findOne({
         where: { checkpointKey: this.getCheckpointKey() },
       });
-      if (checkpoint?.ledgerSequence) {
+      if (checkpoint && checkpoint.ledgerSequence) {
         this.lastIndexedLedger = Number(checkpoint.ledgerSequence);
         return this.lastIndexedLedger;
       }
-      return 0;
     }
 
     if (this.eventLogRepository) {
-      const checkpoint = this.checkpointRepository
-        ? await this.checkpointRepository.findOne({ where: { indexerId: this.checkpointId } })
-        : null;
       const latest = await this.eventLogRepository.findOne({
-        where: { processed: true },
-        where: { processed: true, contractId: In(this.contractIds) },
+        where: {},
         order: { ledgerSequence: "DESC" },
       });
-      const pending = await this.eventLogRepository.findOne({
-        where: { processed: false },
-        order: { ledgerSequence: "ASC" },
-      });
-      let ledger = checkpoint?.ledgerSequence
-        ? Number(checkpoint.ledgerSequence)
-        : latest?.ledgerSequence ? Number(latest.ledgerSequence) : 0;
-      if (pending?.processed === false) {
-        const beforePending = Number(pending.ledgerSequence) - 1;
-        ledger = ledger > 0 ? Math.min(ledger, beforePending) : beforePending;
+      if (latest && latest.ledgerSequence) {
+        this.lastIndexedLedger = Number(latest.ledgerSequence);
+        return this.lastIndexedLedger;
       }
-      this.lastIndexedLedger = Math.max(0, ledger);
-      return this.lastIndexedLedger;
     }
 
     return 0;
   }
 
-  private async runPollCycle(): Promise<void> {
-    const startLedger = (await this.getLastIndexedLedger()) + 1;
-    let cursor: string | undefined;
-    let allEventsProcessed = true;
-
-    do {
-      const requestedCursor = cursor;
-      const events = await this.pollContractEvents({ startLedger, limit: 100, cursor });
-      if (events.length > 0) {
-        const processedCount = await this.ingestEvents(events);
-        if (processedCount !== events.length) {
-          allEventsProcessed = false;
-          break;
-        }
-      }
-      cursor = this.nextCursor;
-      if (events.length < 100) break;
-      if (!cursor || cursor === requestedCursor) {
-        allEventsProcessed = false;
-        break;
-      }
-    } while (cursor);
-
-    if (allEventsProcessed && this.latestLedgerSeen >= startLedger) {
-      await this.saveCheckpoint(this.latestLedgerSeen);
-    }
-  }
-
-  /**
-   * Starts periodic polling in background.
-   */
   public start(intervalMs = 10000): void {
     if (this.intervalHandle) return;
 
@@ -639,26 +488,17 @@ export class EventIndexerService {
       this.polling = true;
       try {
         const events = await this.pollContractEvents();
-        await this.ingestEvents(events);
+        if (events.length > 0) {
+          await this.ingestEvents(events);
+        }
       } catch (err) {
         this.logger.error("Error in Soroban event indexer poll cycle", { err });
       } finally {
         this.polling = false;
-      if (this.pollInFlight) return;
-      this.pollInFlight = true;
-      try {
-        await this.runPollCycle();
-      } catch (err) {
-        this.logger.error("Error in Soroban event indexer poll cycle", { err });
-      } finally {
-        this.pollInFlight = false;
       }
     }, intervalMs);
   }
 
-  /**
-   * Stops periodic polling.
-   */
   public stop(): void {
     if (this.intervalHandle) {
       clearInterval(this.intervalHandle);

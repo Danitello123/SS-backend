@@ -30,11 +30,6 @@ describe("EventIndexerService (Issue #135)", () => {
       findOne: jest.fn().mockImplementation(({ where }) =>
         Promise.resolve(where?.eventId ? null : { ledgerSequence: "500" }),
       ),
-      findOne: jest
-        .fn()
-        .mockImplementation(({ where }) =>
-          Promise.resolve(where?.eventId ? null : { ledgerSequence: "500" })
-        ),
     };
 
     mockCheckpointRepo = {

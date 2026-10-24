@@ -164,6 +164,12 @@ export function createAdminRouter({
       try {
         const balance = await investorInsightsService.getBonusPoolBalance();
         res.status(200).json({ success: true, data: { pool_balance: balance } });
+      } catch (error) {
+        next(error);
+      }
+    });
+  }
+
   if (invoiceService) {
     // Legacy x-admin-key routes
     router.post("/invoices/:id/approve", (req, res) => {

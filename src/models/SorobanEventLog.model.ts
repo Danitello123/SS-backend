@@ -21,9 +21,6 @@ export class SorobanEventLog {
   @Column({ name: "tx_hash", type: "varchar", length: 64 })
   txHash!: string;
 
-  @Column({ name: "event_id", type: "varchar", length: 128, nullable: true })
-  eventId!: string | null;
-
   @Column({ type: "jsonb", nullable: true })
   payload!: Record<string, unknown> | null;
 
