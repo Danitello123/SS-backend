@@ -1,4 +1,4 @@
-import { DataSource, EntityManager, MoreThan } from "typeorm";
+import { DataSource, EntityManager, In, MoreThan } from "typeorm";
 import { Decimal } from "decimal.js";
 import { SecondaryListing } from "../models/SecondaryListing.model";
 import { Invoice } from "../models/Invoice.model";
@@ -76,7 +76,6 @@ export interface BuyListingResult {
   buyerWallet: string;
   quantity: string;
   totalPrice: string;
-  transactionHash?: string;
 }
 
 export class SecondaryMarketService {
@@ -114,7 +113,10 @@ export class SecondaryMarketService {
       }
 
       // Get invoice
-      const invoice = await manager.findOne(Invoice, { where: { id: invoiceId } });
+      const invoice = await manager.findOne(Invoice, {
+        where: { id: invoiceId },
+        lock: { mode: "pessimistic_write" },
+      });
       if (!invoice) {
         throw new ServiceError("INVOICE_NOT_FOUND", "Invoice not found", 404);
       }
@@ -140,6 +142,23 @@ export class SecondaryMarketService {
           "INVALID_INVOICE_STATUS",
           "Only funded invoices can be listed on secondary market",
           400
+        );
+      }
+      const settlementIntent = await manager.findOne(SettlementIntent, {
+        where: {
+          invoiceId,
+          status: In([
+            SettlementIntentStatus.PREPARED,
+            SettlementIntentStatus.SUBMITTING,
+            SettlementIntentStatus.DISTRIBUTED,
+          ]),
+        },
+      });
+      if (settlementIntent) {
+        throw new ServiceError(
+          "SETTLEMENT_IN_PROGRESS",
+          "Invoice settlement is in progress; holdings cannot be listed",
+          409
         );
       }
 
@@ -364,7 +383,7 @@ export class SecondaryMarketService {
       // Get listing
       const listing = await manager.findOne(SecondaryListing, {
         where: { id: listingId },
-        relations: ["invoice"],
+        lock: { mode: "pessimistic_write" },
       });
 
       if (!listing) {
@@ -384,6 +403,38 @@ export class SecondaryMarketService {
         (Boolean(listing.sellerId) && Boolean(buyerId) && listing.sellerId === buyerId)
       ) {
         throw new ServiceError("SELF_PURCHASE", "Cannot buy your own listing", 400);
+      }
+
+      const invoice = await manager.findOne(Invoice, {
+        where: { id: listing.invoiceId },
+        lock: { mode: "pessimistic_write" },
+      });
+      if (!invoice) {
+        throw new ServiceError("INVOICE_NOT_FOUND", "Invoice not found", 404);
+      }
+      if (invoice.status !== InvoiceStatus.FUNDED) {
+        throw new ServiceError(
+          "INVALID_INVOICE_STATUS",
+          "Only funded invoices can be purchased on the secondary market",
+          400
+        );
+      }
+      const settlementIntent = await manager.findOne(SettlementIntent, {
+        where: {
+          invoiceId: invoice.id,
+          status: In([
+            SettlementIntentStatus.PREPARED,
+            SettlementIntentStatus.SUBMITTING,
+            SettlementIntentStatus.DISTRIBUTED,
+          ]),
+        },
+      });
+      if (settlementIntent) {
+        throw new ServiceError(
+          "SETTLEMENT_IN_PROGRESS",
+          "Invoice settlement is in progress; holdings cannot be transferred",
+          409
+        );
       }
 
       // Determine quantity to buy (default to full listing quantity)
@@ -532,7 +583,6 @@ export class SecondaryMarketService {
         buyer_wallet: buyerWallet,
         quantity: buyQuantity.toFixed(4),
         total_price: totalPrice.toFixed(4),
-        transaction_hash: transactionHash,
       });
 
       return {
@@ -540,7 +590,6 @@ export class SecondaryMarketService {
         buyerWallet,
         quantity: buyQuantity.toFixed(4),
         totalPrice: totalPrice.toFixed(4),
-        transactionHash,
       };
     });
 
