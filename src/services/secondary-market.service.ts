@@ -183,6 +183,7 @@ export class SecondaryMarketService {
             ? [{ invoiceId, investorId: sellerId, status: InvestmentStatus.CONFIRMED }]
             : []),
         ],
+        lock: { mode: "pessimistic_write" },
       });
 
       if (investments.length === 0) {
@@ -200,15 +201,30 @@ export class SecondaryMarketService {
       );
 
       // Check active listings by this seller for this invoice to prevent double-listing
+      const activeListingsWhere =
+        sellerWallet && sellerId
+          ? [
+              { invoiceId, sellerWallet, status: ListingStatus.ACTIVE },
+              { invoiceId, sellerId, status: ListingStatus.ACTIVE },
+            ]
+          : {
+              invoiceId,
+              ...(sellerWallet ? { sellerWallet } : {}),
+              ...(sellerId ? { sellerId } : {}),
+              status: ListingStatus.ACTIVE,
+            };
+
       const activeListings = await manager.find(SecondaryListing, {
-        where: [
-          ...(sellerWallet ? [{ invoiceId, sellerWallet, status: ListingStatus.ACTIVE }] : []),
-          ...(sellerId ? [{ invoiceId, sellerId, status: ListingStatus.ACTIVE }] : []),
-        ],
+        where: activeListingsWhere,
       });
 
       const currentlyListed = activeListings
-        .filter((l) => !l.isExpired())
+        .filter((l) => {
+          if (typeof l.isExpired === "function") {
+            return !l.isExpired();
+          }
+          return !l.expiresAt || new Date(l.expiresAt).getTime() >= Date.now();
+        })
         .reduce((sum, l) => sum.plus(new Decimal(l.quantity)), new Decimal(0));
 
       const availableHoldings = totalHoldings.minus(currentlyListed);
