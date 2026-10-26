@@ -3,15 +3,17 @@ import crypto from "crypto";
 import { z } from "zod";
 import { submitInvoiceSchema } from "@/lib/invoice-submission.schema";
 import { adminNotificationQueue } from "@/services/admin-notification-queue.service";
-import { UserType } from "@/types/enums";
+import { UserType, KYCStatus } from "@/types/enums";
 import type { AuthenticatedRequest } from "@/types/auth";
 import type { InvoiceService } from "@/services/invoice.service";
+import type { AppConfig } from "@/config/env";
 import { ServiceError } from "@/utils/service-error";
 
 export async function submitInvoice(
   req: Request | AuthenticatedRequest,
   res: Response,
-  invoiceService?: InvoiceService
+  invoiceService?: InvoiceService,
+  config?: AppConfig
 ) {
   try {
     const user = (req as AuthenticatedRequest).user;
@@ -27,6 +29,25 @@ export async function submitInvoice(
           message: "Only sellers can submit invoices for review",
         },
       });
+    }
+
+    // KYC approval required before invoice submission is permitted
+    const appConfig = (req.app?.get?.("config") as AppConfig | undefined);
+    const skipKyc =
+      config?.kyc?.skipVerification === true ||
+      appConfig?.kyc?.skipVerification === true;
+
+    if (!skipKyc) {
+      const isApproved =
+        user.kycStatus === KYCStatus.APPROVED || user.isKycVerified === true;
+      if (!isApproved) {
+        return res.status(403).json({
+          error: {
+            code: "KYC_APPROVAL_REQUIRED",
+            message: "KYC approval is required before invoice submission is permitted",
+          },
+        });
+      }
     }
 
     const parseResult = submitInvoiceSchema.safeParse(req.body);

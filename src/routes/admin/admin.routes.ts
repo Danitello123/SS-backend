@@ -20,6 +20,8 @@ import type { FeeScheduleService } from "@/services/fee-schedule.service";
 import { approveKYC } from "./approve-kyc";
 import { rejectKYC } from "./reject-kyc";
 import { revokeKYC } from "./revoke-kyc";
+import { KycService } from "@/services/kyc.service";
+import { createKycController } from "@/controllers/kyc.controller";
 import { approveInvoice } from "./approve-invoice";
 import { rejectInvoice } from "./reject-invoice";
 import { createAclController } from "./acl";
@@ -52,6 +54,7 @@ export interface AdminRouterDependencies {
   /** Optional: enables POST /invoices/:invoiceId/settle for admin settlement. */
   adminSettlementService?: AdminSettlementService;
   adminWallets?: string[];
+  kycService?: KycService;
   invoiceEscrowContractService?: InvoiceEscrowContractService;
   feeScheduleService?: FeeScheduleService;
   /** Optional: enables waitlist management endpoints (issue #599) */
@@ -109,6 +112,7 @@ export function createAdminRouter({
   metricsService: _metricsService,
   adminSettlementService,
   adminWallets = [],
+  kycService,
   invoiceEscrowContractService,
   feeScheduleService,
   waitlistService: _waitlistService,
@@ -169,6 +173,12 @@ export function createAdminRouter({
       }
     });
   }
+
+  router.patch("/kyc/:id/review", (req, res, next) => {
+    const service = kycService ?? new KycService(dataSource, process.env.KYC_WEBHOOK_SECRET || "");
+    const controller = createKycController(service);
+    return controller.review(req, res, next);
+  });
 
   if (invoiceService) {
     // Legacy x-admin-key routes

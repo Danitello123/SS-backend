@@ -11,13 +11,14 @@ export class SecondaryMarketController {
         return res.status(401).json({ error: "Unauthorized" });
       }
 
-      const { invoiceId, quantity, pricePerFraction, expiresAt } = req.body;
+      const { invoiceId, quantity, pricePerFraction, price, expiresAt } = req.body || {};
+      const effectivePrice = pricePerFraction ?? price;
 
-      if (!invoiceId || !quantity || !pricePerFraction || !expiresAt) {
+      if (!invoiceId || !quantity || !effectivePrice) {
         return res.status(400).json({
           error: {
             code: "MISSING_FIELDS",
-            message: "invoiceId, quantity, pricePerFraction, and expiresAt are required",
+            message: "invoiceId, quantity, and pricePerFraction (or price) are required",
           },
         });
       }
@@ -27,8 +28,10 @@ export class SecondaryMarketController {
         sellerWallet: req.user.stellarAddress,
         sellerId: req.user.id,
         quantity: Array.isArray(quantity) ? quantity[0] : quantity,
-        pricePerFraction: Array.isArray(pricePerFraction) ? pricePerFraction[0] : pricePerFraction,
-        expiresAt: new Date(Array.isArray(expiresAt) ? expiresAt[0] : expiresAt),
+        pricePerFraction: Array.isArray(effectivePrice) ? effectivePrice[0] : effectivePrice,
+        expiresAt: expiresAt
+          ? new Date(Array.isArray(expiresAt) ? expiresAt[0] : expiresAt)
+          : undefined,
       });
 
       return res.status(201).json({
@@ -65,8 +68,8 @@ export class SecondaryMarketController {
         sellerWallet: sellerWallet as string | undefined,
         minPrice: minPrice ? Number(Array.isArray(minPrice) ? minPrice[0] : minPrice) : undefined,
         maxPrice: maxPrice ? Number(Array.isArray(maxPrice) ? maxPrice[0] : maxPrice) : undefined,
-        sortBy: (sortBy as string) as "price" | "expires_at" | "created_at",
-        sortOrder: (sortOrder as string) as "ASC" | "DESC",
+        sortBy: sortBy as string as "price" | "expires_at" | "created_at",
+        sortOrder: sortOrder as string as "ASC" | "DESC",
       };
 
       const pagination = {
@@ -123,7 +126,7 @@ export class SecondaryMarketController {
       }
 
       const { id } = req.params;
-      const { quantity } = req.body;
+      const { quantity } = req.body || {};
 
       const result = await this.secondaryMarketService.buyListing({
         listingId: Array.isArray(id) ? id[0] : id,
@@ -155,12 +158,13 @@ export class SecondaryMarketController {
       }
 
       const { id } = req.params;
-      const { reason } = req.body;
+      const { reason } = req.body || {};
 
       const listing = await this.secondaryMarketService.cancelListing(
         Array.isArray(id) ? id[0] : id,
         req.user.stellarAddress,
-        reason
+        reason,
+        req.user.id
       );
 
       return res.status(200).json({

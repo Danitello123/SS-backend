@@ -338,6 +338,7 @@ export function createApp({
 
   if (kycService) {
     app.use("/api/v1/kyc", createKycWebhookRouter(kycService));
+    app.use("/kyc", createKycWebhookRouter(kycService));
   }
 
   app.use(express.json());
@@ -451,6 +452,7 @@ export function createApp({
 
   if (kycService) {
     app.use("/api/v1/kyc", createKycRouter(kycService, authService));
+    app.use("/kyc", createKycRouter(kycService, authService));
   }
 
   if (notificationService) {
@@ -537,10 +539,13 @@ export function createApp({
   }
 
   if (secondaryMarketService && authService) {
-    app.use(
-      "/api/v1/secondary",
-      createSecondaryMarketRouter({ secondaryMarketService, authService })
-    );
+    const secondaryMarketRouter = createSecondaryMarketRouter({
+      secondaryMarketService,
+      authService,
+    });
+    app.use("/api/v1/secondary-market", secondaryMarketRouter);
+    app.use("/secondary-market", secondaryMarketRouter);
+    app.use("/api/v1/secondary", secondaryMarketRouter);
   }
 
   if (watchlistService && authService) {
@@ -621,6 +626,7 @@ export function createApp({
         authService,
         aclService,
         invoiceService,
+        kycService,
         adminUserService,
         extensionService,
         metricsService: adminMetricsService,
@@ -629,7 +635,6 @@ export function createApp({
         invoiceEscrowContractService,
         feeScheduleService,
         waitlistService,
-        notificationService
       })
     );
   }
