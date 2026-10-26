@@ -1,8 +1,8 @@
 ## Description
 
+### Feature 474: Secondary Market Endpoints
 Builds secondary market listing and purchase endpoints for fractional invoice shares, allowing investors to list their fractional holdings for resale and other investors to purchase from those listings.
 
-### Scope & Key Implementation:
 - **`POST /secondary-market/listings`**: Creates a resale listing with price and quantity.
   - Validates that the seller owns sufficient confirmed shares in the invoice, accounting for existing active listings to prevent double-listing.
   - Validates invoice status (only funded invoices can be listed).
@@ -23,6 +23,37 @@ Builds secondary market listing and purchase endpoints for fractional invoice sh
   - Mounted on `/secondary-market`, `/api/v1/secondary-market`, and `/api/v1/secondary` for complete URL compatibility.
 
 Closes #474
+
+---
+
+### Feature 475: KYC Endpoints & Invoice Submission Gating
+Implements KYC document submission, verification status checks, admin review transitions, and invoice submission gating as requested in Issue #475.
+
+- **`POST /kyc/submit`**:
+  - Accepts seller details (`legalName`, `registrationNumber`, `jurisdiction`, etc.) and IPFS document CIDs (`documentCids`, `documentType`, `documentNumber`, `ipfsDocumentUrl`).
+  - Validates payload structure and stores document CIDs within verification records.
+  - Sets KYC status to `PENDING`.
+  - Rejects new submissions with HTTP 409 Conflict if a verification is already `PENDING` or `APPROVED`.
+- **`GET /kyc/status`**:
+  - Returns current verification status (`PENDING`, `APPROVED`, `REJECTED`) for the authenticated seller/wallet.
+  - Returns `rejectionReason` when status is `REJECTED`, and `null` otherwise.
+- **Admin `PATCH /kyc/:id/review`**:
+  - Allows administrators (authenticated via `x-admin-key` header or admin JWT) to update verification status to `APPROVED` or `REJECTED`.
+  - Requires rejection reason when rejecting verification.
+  - Dispatches notifications (`KYC_APPROVED` / `KYC_REJECTED`) and logs audit trail via `logKYCStatusChange`.
+  - Also mounted on `/admin/kyc/:id/review` and `/api/v1/admin/kyc/:id/review`.
+- **Re-submission on Rejected Status**:
+  - Permitted when user's KYC status is `REJECTED`.
+  - Archives previous verification record in `KycHistoryRepository`.
+  - Resets status to `PENDING`, updates document CIDs, and clears previous rejection reason.
+- **Invoice Submission KYC Gating**:
+  - Invoice submission (`POST /invoices` and `POST /api/v1/invoices`) checks seller KYC verification.
+  - Blocks wallets without approved KYC (`user.kycStatus === 'approved'` or `user.isKycVerified === true`) with HTTP 403 (`KYC_APPROVAL_REQUIRED`), unless `skipVerification` is enabled in configuration.
+- **Backwards Compatibility**:
+  - All endpoints are accessible both directly on `/kyc` and under the `/api/v1/kyc` prefix.
+  - Legacy webhook and submission routes remain functional.
+
+Closes #475
 
 ## Type of Change
 
@@ -57,18 +88,22 @@ Closes #474
    ```bash
    npx jest tests/unit/secondary-market.test.ts tests/secondary-market-notifications.test.ts
    ```
-2. Run TypeScript type check:
+2. Run KYC workflow test suite:
    ```bash
-   npx tsc --noEmit
+   npx jest tests/unit/kyc-workflow.test.ts tests/kyc.service.test.ts tests/kyc.controller.test.ts
    ```
-3. Run linting & formatting checks:
+3. Run TypeScript type check:
+   ```bash
+   npm run type-check
+   ```
+4. Run ESLint:
    ```bash
    npm run lint
    ```
 
 ### Test Coverage
 
-- [x] Unit tests added/updated
+- [x] Unit tests added/updated (`tests/unit/secondary-market.test.ts`, `tests/unit/kyc-workflow.test.ts`)
 - [x] Integration tests added/updated
 - [ ] E2E tests added/updated (if applicable)
 - [x] Manual testing completed

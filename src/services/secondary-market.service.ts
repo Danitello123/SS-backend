@@ -1,9 +1,10 @@
-import { DataSource, EntityManager, In, MoreThan } from "typeorm";
+import { DataSource, EntityManager, In } from "typeorm";
 import { Decimal } from "decimal.js";
 import { SecondaryListing } from "../models/SecondaryListing.model";
 import { Invoice } from "../models/Invoice.model";
 import { Investment } from "../models/Investment.model";
 import { Transaction } from "../models/Transaction.model";
+import { SettlementIntent, SettlementIntentStatus } from "../models/SettlementIntent.model";
 import {
   ListingStatus,
   InvoiceStatus,

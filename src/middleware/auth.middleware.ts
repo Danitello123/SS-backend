@@ -286,14 +286,19 @@ export async function authenticateJWT(req: Request, _res: Response, next: NextFu
     return;
   }
 
+  const claimsRecord = claims as Record<string, unknown>;
+  const rawKycStatus = claimsRecord.kycStatus as KYCStatus | undefined;
+
   (req as AuthenticatedRequest).user = {
     id: nonEmptyString(userId) ?? subject,
     // Tokens are issued with the wallet address as subject.
     stellarAddress: resolvedAddress,
     email: null,
     userType: userType || role || (null as unknown as UserType),
-    kycStatus: null as unknown as KYCStatus,
-    isKycVerified: false,
+    kycStatus: rawKycStatus ?? (null as unknown as KYCStatus),
+    isKycVerified: Boolean(
+      claimsRecord.isKycVerified || rawKycStatus === KYCStatus.APPROVED
+    ),
     createdAt: new Date(),
     updatedAt: new Date(),
   };
