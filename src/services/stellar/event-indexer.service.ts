@@ -392,6 +392,38 @@ export class EventIndexerService {
         }
       }
     }
+
+    if (topic === "payment_recorded" || topic === "payment") {
+      const invoiceId = this.extractInvoiceId(event);
+      if (invoiceId && this.invoiceRepository) {
+        const invoice = await this.invoiceRepository.findOne({ where: { id: invoiceId } });
+        if (invoice && invoice.status === InvoiceStatus.FUNDED) {
+          invoice.status = InvoiceStatus.SETTLED;
+          await this.invoiceRepository.save(invoice);
+        }
+      }
+    }
+
+    if (topic === "settle_escrow" || topic === "settle") {
+      const invoiceId = this.extractInvoiceId(event);
+      if (invoiceId && this.invoiceRepository) {
+        const invoice = await this.invoiceRepository.findOne({ where: { id: invoiceId } });
+        if (invoice) {
+          invoice.status = InvoiceStatus.SETTLED;
+          await this.invoiceRepository.save(invoice);
+        }
+      }
+    }
+
+    if (topic === "investment_funded") {
+      const investment = await this.findInvestmentForEvent(event);
+      if (investment) {
+        investment.status = InvestmentStatus.CONFIRMED;
+        investment.transactionHash = event.txHash;
+        investment.fundingBlock = String(event.ledger);
+        await this.investmentRepository?.save(investment);
+      }
+    }
   }
 
   private extractSettlementProceeds(event: DecodedSorobanEvent): string {
@@ -426,25 +458,6 @@ export class EventIndexerService {
       const normalized = String(proceedsStroops);
       if (!/^\d+$/.test(normalized)) {
         throw new Error(`Settlement event ${event.id} contains invalid proceeds stroops.`);
-    if (topic === "payment_recorded" || topic === "payment") {
-      const invoiceId = this.extractInvoiceId(event);
-      if (invoiceId && this.invoiceRepository) {
-        const invoice = await this.invoiceRepository.findOne({ where: { id: invoiceId } });
-        if (invoice && invoice.status === InvoiceStatus.FUNDED) {
-          invoice.status = InvoiceStatus.SETTLED;
-          await this.invoiceRepository.save(invoice);
-        }
-      }
-    }
-
-    if (topic === "settle_escrow" || topic === "settle") {
-      const invoiceId = this.extractInvoiceId(event);
-      if (invoiceId && this.invoiceRepository) {
-        const invoice = await this.invoiceRepository.findOne({ where: { id: invoiceId } });
-        if (invoice) {
-          invoice.status = InvoiceStatus.SETTLED;
-          await this.invoiceRepository.save(invoice);
-        }
       }
       return scaledBigIntToDecimalString(BigInt(normalized) / 1000n);
     }
@@ -465,18 +478,7 @@ export class EventIndexerService {
       if (byId) return byId;
     }
 
-    if (topic === "investment_funded") {
-      const investmentId = this.extractInvestmentId(event);
-      if (investmentId && this.investmentRepository) {
-        const investment = await this.investmentRepository.findOne({ where: { id: investmentId } });
-        if (investment) {
-          investment.status = InvestmentStatus.CONFIRMED;
-          investment.transactionHash = event.txHash;
-          investment.fundingBlock = String(event.ledger);
-          await this.investmentRepository.save(investment);
-        }
-      }
-    }
+    return null;
   }
 
   private extractInvoiceId(event: DecodedSorobanEvent): string | null {

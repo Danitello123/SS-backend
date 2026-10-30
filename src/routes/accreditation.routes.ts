@@ -27,7 +27,6 @@ export function createAccreditationRouter({
 }: AccreditationRouterDependencies): Router {
   const router = Router();
   const auth = createAuthMiddleware(authService);
-  const requireAdminJWT = requireAdmin(adminWallets);
 
   router.get(
     "/:wallet",

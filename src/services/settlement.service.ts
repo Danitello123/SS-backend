@@ -264,7 +264,6 @@ export class SettlementService {
     try {
       let settlementIntent: SettlementIntent | undefined;
       let settlementIntentPayload: SettlementIntentPayload | undefined;
-      let distributionTransactionHash: string | undefined;
 
       if (this.paymentDistributor) {
         if (!this.distributorConfig) {
@@ -310,7 +309,6 @@ export class SettlementService {
               amountStroops: BigInt(investment.returnAmountStroops),
             })),
           });
-          distributionTransactionHash = distribution.transactionHash;
           settlementIntent = await this.markSettlementDistributed(
             settlementIntent.id,
             distribution.transactionHash
@@ -324,7 +322,6 @@ export class SettlementService {
               { invoiceId }
             );
           }
-          distributionTransactionHash = settlementIntent.transactionHash;
         } else {
           throw new ServiceError(
             "SETTLEMENT_RECONCILIATION_REQUIRED",
