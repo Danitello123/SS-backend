@@ -1,4 +1,4 @@
-import { Address, scValToNative } from "@stellar/stellar-sdk";
+import { Address, scValToNative } from "stellar-sdk";
 import { InvoiceEscrowContractService } from "../../../../src/services/stellar/invoice-escrow-contract.service";
 import type { AppLogger } from "../../../../src/observability/logger";
 import { ServiceError } from "../../../../src/utils/service-error";
@@ -376,10 +376,20 @@ describe("InvoiceEscrowContractService", () => {
           status: "NOT_FOUND",
         }),
       } as any;
+      const queryBuilder = {
+        insert: jest.fn().mockReturnThis(),
+        into: jest.fn().mockReturnThis(),
+        values: jest.fn().mockReturnThis(),
+        orIgnore: jest.fn().mockReturnThis(),
+        execute: jest.fn().mockResolvedValue(undefined),
+      };
 
       const rpcService = new InvoiceEscrowContractService({
         contractId: ESCROW_CONTRACT_ID,
         server: mockServer,
+        dataSource: {
+          createQueryBuilder: () => queryBuilder,
+        } as any,
         logger: mockLogger,
         confirmationPollMs: 1,
         confirmationAttempts: 2,

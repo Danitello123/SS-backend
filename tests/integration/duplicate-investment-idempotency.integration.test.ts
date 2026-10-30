@@ -198,6 +198,7 @@ describe("Duplicate investment funding idempotency (issue #219)", () => {
       investmentRepository.create({
         invoiceId: invoice.id,
         investorId: investor.id,
+        investorWallet: investor.stellarAddress,
         investmentAmount: "500.0000",
         expectedReturn: "526.3158",
         status: InvestmentStatus.PENDING,
@@ -263,6 +264,7 @@ describe("Duplicate investment funding idempotency (issue #219)", () => {
       investmentRepository.create({
         invoiceId: invoice.id,
         investorId: investor.id,
+        investorWallet: investor.stellarAddress,
         investmentAmount: "250.0000",
         expectedReturn: "263.1579",
         status: InvestmentStatus.PENDING,

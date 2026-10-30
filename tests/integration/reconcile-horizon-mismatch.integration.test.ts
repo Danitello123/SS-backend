@@ -483,6 +483,7 @@ describe("Horizon Reconciliation Worker Integration Test - mismatch handling", (
         investmentRepository.create({
           invoiceId: invoice.id,
           investorId: investor.id,
+          investorWallet: investor.stellarAddress,
           investmentAmount: "100.0000",
           expectedReturn: "105.2632",
           status: InvestmentStatus.PENDING,
@@ -535,6 +536,7 @@ describe("Horizon Reconciliation Worker Integration Test - mismatch handling", (
                       asset_issuer: "GUSDC123",
                       amount: "600.0000",
                       to: "GESCROW123",
+                      source_account: investor.stellarAddress,
                     },
                   ],
                 },
@@ -565,6 +567,7 @@ describe("Horizon Reconciliation Worker Integration Test - mismatch handling", (
         investmentRepository.create({
           invoiceId: invoice.id,
           investorId: investor.id,
+          investorWallet: investor.stellarAddress,
           investmentAmount: "600.0000",
           expectedReturn: "631.5789",
           status: InvestmentStatus.PENDING,
