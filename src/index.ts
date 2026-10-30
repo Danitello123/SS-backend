@@ -62,6 +62,7 @@ import { createBenchmarkService } from "./services/benchmark.service";
 import { createReferralTierService } from "./services/referral-tier.service";
 import { createYieldBoostService } from "./services/yield-boost.service";
 import { createSecondaryAuctionService } from "./services/secondary-auction.service";
+import { PendingStellarConfirmationWorker } from "./workers/reconcile-pending-stellar-state.worker";
 
 export async function bootstrap(): Promise<{
   server: Server;

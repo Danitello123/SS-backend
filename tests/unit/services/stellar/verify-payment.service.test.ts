@@ -8,6 +8,7 @@ import type { PaymentVerificationConfig } from "../../../../src/config/stellar";
 describe("VerifyPaymentService", () => {
   const TEST_TX_HASH = "abc123def456";
   const TEST_INVESTMENT_ID = "inv-001";
+  const TEST_INVESTOR_WALLET = "GINVESTORTEST123";
   const TEST_ESCROW_KEY = "GBZXN7PIRZGNMHGA7MUUUF4GWPY5AYPV6LY4UV2GL6VJGIQRXFDNMADI";
   const TEST_USDC_ISSUER = "CBZXN7PIRZGNMHGA7MUUUF4GWPY5AYPV6LY4UV2GL6VJGIQRXFDNMADI";
 
@@ -31,6 +32,7 @@ describe("VerifyPaymentService", () => {
     status: InvestmentStatus.PENDING,
     transactionHash: null,
     stellarOperationIndex: null,
+    investorWallet: TEST_INVESTOR_WALLET,
     ...overrides,
   } as Investment);
 
@@ -58,10 +60,19 @@ describe("VerifyPaymentService", () => {
   };
 
   const createJsonResponse = (data: unknown, status = 200): Response => {
+    const body = data as {
+      _embedded?: { records?: Array<Record<string, unknown>> };
+    };
+    if (body?._embedded?.records) {
+      body._embedded.records = body._embedded.records.map((record) => ({
+        ...record,
+        source_account: record.source_account ?? TEST_INVESTOR_WALLET,
+      }));
+    }
     return {
       ok: status >= 200 && status < 300,
       status,
-      json: () => Promise.resolve(data),
+      json: () => Promise.resolve(body),
     } as Response;
   };
 

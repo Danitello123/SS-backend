@@ -11,10 +11,19 @@ interface MockResponseInit {
 }
 
 function createMockResponse({ ok, status, body }: MockResponseInit): Response {
+  const horizonBody = body as {
+    _embedded?: { records?: Array<Record<string, unknown>> };
+  };
+  if (horizonBody?._embedded?.records) {
+    horizonBody._embedded.records = horizonBody._embedded.records.map((record) => ({
+      ...record,
+      source_account: record.source_account ?? "GINVESTOR123",
+    }));
+  }
   return {
     ok,
     status,
-    json: async () => body,
+    json: async () => horizonBody,
   } as Response;
 }
 
@@ -29,6 +38,7 @@ function createInvestment(overrides: Partial<Investment> = {}): Investment {
     status: overrides.status ?? InvestmentStatus.PENDING,
     transactionHash: overrides.transactionHash ?? null,
     stellarOperationIndex: overrides.stellarOperationIndex ?? null,
+    investorWallet: overrides.investorWallet ?? "GINVESTOR123",
     createdAt: overrides.createdAt ?? new Date(),
     updatedAt: overrides.updatedAt ?? new Date(),
     deletedAt: overrides.deletedAt ?? null,

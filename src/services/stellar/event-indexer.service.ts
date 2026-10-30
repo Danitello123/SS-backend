@@ -46,6 +46,7 @@ export class EventIndexerService {
   private readonly invoiceRepository?: Repository<Invoice>;
   private readonly investmentRepository?: Repository<Investment>;
   private readonly investorInsightsService?: InvestorInsightsService;
+  private readonly settlementService?: SettlementService;
   private readonly checkpointId: string;
   private readonly lagAlertThresholdLedgers: number;
   private readonly eventBus?: ContractEventBus;
@@ -470,9 +471,7 @@ export class EventIndexerService {
   private async findInvestmentForEvent(event: DecodedSorobanEvent): Promise<Investment | null> {
     if (!this.investmentRepository) return null;
 
-    const data =
-      event.data && typeof event.data === "object" ? (event.data as Record<string, unknown>) : {};
-    const investmentId = this.stringValue(data.investment_id ?? data.investmentId);
+    const investmentId = this.extractInvestmentId(event);
     if (investmentId) {
       const byId = await this.investmentRepository.findOne({ where: { id: investmentId } });
       if (byId) return byId;
@@ -497,8 +496,9 @@ export class EventIndexerService {
   private extractInvestmentId(event: DecodedSorobanEvent): string | null {
     if (event.data && typeof event.data === "object") {
       const dataObj = event.data as Record<string, unknown>;
-      if ("investment_id" in dataObj) {
-        return String(dataObj.investment_id);
+      const investmentId = dataObj.investment_id ?? dataObj.investmentId;
+      if (investmentId !== undefined && investmentId !== null) {
+        return String(investmentId);
       }
     }
     return null;

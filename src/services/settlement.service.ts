@@ -264,6 +264,7 @@ export class SettlementService {
     try {
       let settlementIntent: SettlementIntent | undefined;
       let settlementIntentPayload: SettlementIntentPayload | undefined;
+      let distributionTransactionHash: string | undefined;
 
       if (this.paymentDistributor) {
         if (!this.distributorConfig) {
@@ -309,6 +310,7 @@ export class SettlementService {
               amountStroops: BigInt(investment.returnAmountStroops),
             })),
           });
+          distributionTransactionHash = distribution.transactionHash;
           settlementIntent = await this.markSettlementDistributed(
             settlementIntent.id,
             distribution.transactionHash
@@ -322,6 +324,7 @@ export class SettlementService {
               { invoiceId }
             );
           }
+          distributionTransactionHash = settlementIntent.transactionHash;
         } else {
           throw new ServiceError(
             "SETTLEMENT_RECONCILIATION_REQUIRED",
@@ -444,9 +447,9 @@ export class SettlementService {
             : 0n;
           const distributableScaled = proceedsScaled - feeScaled;
           const settlements: InvestorSettlement[] = [];
-          let distributionTransactionHash = settlementTransactionHash;
+          let transactionHash = settlementTransactionHash ?? distributionTransactionHash;
 
-          if (this.paymentDistributor && !settlementTransactionHash) {
+          if (this.paymentDistributor && !transactionHash) {
             if (!this.distributorConfig) {
               throw new ServiceError(
                 "DISTRIBUTOR_CONFIGURATION_MISSING",
@@ -468,10 +471,10 @@ export class SettlementService {
                   ) * DECIMAL_SCALE_TO_STROOP_FACTOR,
               })),
             });
-            distributionTransactionHash = distribution.transactionHash;
+            transactionHash = distribution.transactionHash;
           }
 
-          if (distributionTransactionHash) {
+          if (transactionHash) {
             await transactionalEntityManager.save(
               Transaction,
               transactionalEntityManager.create(Transaction, {
@@ -480,7 +483,7 @@ export class SettlementService {
                 investmentId: null,
                 type: TransactionType.PAYMENT,
                 amount: proceeds.toFixed(4),
-                stellarTxHash: distributionTransactionHash,
+                stellarTxHash: transactionHash,
                 stellarOperationIndex: 0,
                 status: TransactionStatus.COMPLETED,
               })
@@ -560,7 +563,7 @@ export class SettlementService {
             if (
               !completedIntent ||
               completedIntent.status !== SettlementIntentStatus.DISTRIBUTED ||
-              completedIntent.transactionHash !== distributionTransactionHash
+              completedIntent.transactionHash !== transactionHash
             ) {
               throw new ServiceError(
                 "SETTLEMENT_INTENT_INVALID",
@@ -580,7 +583,7 @@ export class SettlementService {
             totalDistributedAmount: totalDistributedStr,
             remainderAmount: remainderStr,
             settledAt: new Date(),
-            distributionTransactionHash: distributionTransactionHash ?? null,
+            distributionTransactionHash: transactionHash ?? null,
             returns: settlements.map((s) => ({
               investmentId: s.investmentId,
               investorId: s.investorId,
@@ -601,7 +604,7 @@ export class SettlementService {
               remainder: remainderStr,
               remainderDust: remainderStr,
               settlements,
-              distributionTransactionHash,
+              distributionTransactionHash: transactionHash,
             },
           };
         });

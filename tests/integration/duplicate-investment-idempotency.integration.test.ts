@@ -107,6 +107,7 @@ describe("Duplicate investment funding idempotency (issue #219)", () => {
                 asset_issuer: "GUSDC123",
                 amount,
                 to: "GESCROW123",
+                source_account: "GINVESTORDUP123",
               },
             ],
           },

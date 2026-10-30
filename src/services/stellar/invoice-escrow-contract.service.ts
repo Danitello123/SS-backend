@@ -8,6 +8,7 @@ import {
   Keypair,
   TransactionBuilder,
   BASE_FEE,
+  SorobanRpc,
 } from "stellar-sdk";
 import type { DataSource } from "typeorm";
 import type { AppLogger } from "../../observability/logger";
