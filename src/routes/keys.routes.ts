@@ -6,8 +6,10 @@ import { createAuthMiddleware } from "../middleware/auth.middleware";
 import type { AuthService } from "../services/auth.service";
 import type { CreatorKeyService } from "../services/creator-key.service";
 import type { CurveMigrationService } from "../services/curve-migration.service";
-import { UserType } from "../types/enums";
+import { AdminRole, UserType } from "../types/enums";
 import type { AuthenticatedRequest } from "../types/auth";
+import type { KeyMergeProposalService } from "../services/key-merge-proposal.service";
+import { isKeyCreator } from "../controllers/key-merge-proposal.controller";
 
 export interface KeysRouterDependencies {
   ratingsLeaderboardService?: RatingsLeaderboardService;
@@ -16,6 +18,8 @@ export interface KeysRouterDependencies {
   creatorKeyService?: CreatorKeyService;
   /** Issue #544 — pending/executed curve migrations for a key. */
   curveMigrationService?: CurveMigrationService;
+  /** Key merge proposals, holder vote tallies, and execution status. */
+  keyMergeProposalService?: KeyMergeProposalService;
 }
 
 /**
@@ -42,6 +46,7 @@ export function createKeysRouter({
   authService,
   creatorKeyService,
   curveMigrationService,
+  keyMergeProposalService,
 }: KeysRouterDependencies): Router {
   const router = Router();
 
@@ -53,13 +58,15 @@ export function createKeysRouter({
           const rawLimit = parseInt(String(req.query.limit ?? "50"), 10);
           const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 100) : 50;
 
-          const rawMin = req.query.minCount !== undefined
-            ? parseInt(String(req.query.minCount), 10)
-            : undefined;
+          const rawMin =
+            req.query.minCount !== undefined ? parseInt(String(req.query.minCount), 10) : undefined;
           const minRatingCountOverride =
             rawMin !== undefined && Number.isFinite(rawMin) && rawMin >= 0 ? rawMin : undefined;
 
-          const result = await ratingsLeaderboardService!.getLeaderboard(limit, minRatingCountOverride);
+          const result = await ratingsLeaderboardService!.getLeaderboard(
+            limit,
+            minRatingCountOverride
+          );
 
           res.status(200).json({
             success: true,
@@ -153,6 +160,129 @@ export function createKeysRouter({
           });
         } catch (error) {
           logger.error("GET /keys/:id/curve-migrations failed", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          next(error);
+        }
+      }
+    );
+  }
+
+  // ---- GET /keys/:id/merge-proposals — pending and completed merge proposals ----
+  // Admin and creator access enforced per endpoint
+  if (keyMergeProposalService) {
+    const requireAuth = authService
+      ? createAuthMiddleware(authService)
+      : (_req: Request, _res: Response, next: NextFunction) => next();
+
+    const MERGE_STATUS_FILTERS = new Set(["all", "pending", "completed", "executed"]);
+
+    router.get(
+      "/:id/merge-proposals",
+      requireAuth,
+      async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+        try {
+          const user = req.user;
+          if (!user) {
+            next(new AppError(401, "Authentication required.", "UNAUTHORIZED"));
+            return;
+          }
+
+          const userTypeStr = String(user.userType).toLowerCase();
+          const isAdmin =
+            userTypeStr === "admin" ||
+            user.userType === UserType.ADMIN ||
+            (user.userType as unknown) === AdminRole.ADMIN;
+
+          let isCreator = false;
+          if (creatorKeyService) {
+            isCreator = await isKeyCreator(req, creatorKeyService, String(req.params.id));
+          } else {
+            isCreator = isCreatorRole(user.userType);
+          }
+
+          if (!isAdmin && !isCreator) {
+            next(new AppError(403, "Admin or creator access required.", "FORBIDDEN"));
+            return;
+          }
+
+          const status = req.query.status ? String(req.query.status).toLowerCase() : "all";
+          if (!MERGE_STATUS_FILTERS.has(status)) {
+            next(
+              new AppError(
+                400,
+                `Invalid 'status' filter. Use one of: ${[...MERGE_STATUS_FILTERS].join(", ")}.`,
+                "INVALID_STATUS"
+              )
+            );
+            return;
+          }
+
+          const rawLimit =
+            req.query.limit !== undefined ? parseInt(String(req.query.limit), 10) : undefined;
+          const limit =
+            rawLimit !== undefined && Number.isFinite(rawLimit) && rawLimit > 0
+              ? rawLimit
+              : undefined;
+          const cursor = req.query.cursor ? String(req.query.cursor) : undefined;
+
+          const result = await keyMergeProposalService.listForKey(String(req.params.id), {
+            status,
+            limit,
+            cursor,
+          });
+
+          res.status(200).json({
+            success: true,
+            data: result,
+            meta: result.meta,
+          });
+        } catch (error) {
+          logger.error("GET /keys/:id/merge-proposals failed", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          next(error);
+        }
+      }
+    );
+
+    router.get(
+      "/:id/merge-proposals/:proposalId",
+      requireAuth,
+      async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+        try {
+          const user = req.user;
+          if (!user) {
+            next(new AppError(401, "Authentication required.", "UNAUTHORIZED"));
+            return;
+          }
+
+          const userTypeStr = String(user.userType).toLowerCase();
+          const isAdmin =
+            userTypeStr === "admin" ||
+            user.userType === UserType.ADMIN ||
+            (user.userType as unknown) === AdminRole.ADMIN;
+
+          let isCreator = false;
+          if (creatorKeyService) {
+            isCreator = await isKeyCreator(req, creatorKeyService, String(req.params.id));
+          } else {
+            isCreator = isCreatorRole(user.userType);
+          }
+
+          if (!isAdmin && !isCreator) {
+            next(new AppError(403, "Admin or creator access required.", "FORBIDDEN"));
+            return;
+          }
+
+          const proposal = await keyMergeProposalService.getProposal(String(req.params.proposalId));
+
+          res.status(200).json({
+            success: true,
+            data: proposal,
+          });
+        } catch (error) {
+          logger.error("GET /keys/:id/merge-proposals/:proposalId failed", {
             error: error instanceof Error ? error.message : String(error),
           });
           next(error);

@@ -7,6 +7,9 @@ import { MigrationInterface, QueryRunner } from "typeorm";
 export class AddInvoiceFailedStatus1732700000000 implements MigrationInterface {
   name = "AddInvoiceFailedStatus1732700000000";
 
+  /** Postgres rejects ALTER TYPE ... ADD VALUE inside a transaction (SQLSTATE 25001). */
+  transaction = false as const;
+
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(
       `ALTER TYPE "public"."invoices_invoicestatus_enum" ADD VALUE IF NOT EXISTS 'failed';`

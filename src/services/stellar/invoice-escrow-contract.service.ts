@@ -3,7 +3,6 @@ import {
   Address,
   nativeToScVal,
   xdr,
-  SorobanRpc,
   Transaction,
   FeeBumpTransaction,
   Keypair,
@@ -414,10 +413,10 @@ export class InvoiceEscrowContractService {
       );
     }
 
-    const response = await this.withRpcRetry(
+    const response = (await this.withRpcRetry(
       () => this.rpcServer!.sendTransaction(transaction),
       "sendTransaction"
-    );
+    )) as SorobanRpc.Api.SendTransactionResponse;
 
     return {
       status: response.status,
@@ -686,10 +685,10 @@ export class InvoiceEscrowContractService {
     const prepared = await this.rpcServer.prepareTransaction(transaction);
     prepared.sign(signer);
 
-    const submitted = await this.withRpcRetry(
+    const submitted = (await this.withRpcRetry(
       () => this.rpcServer!.sendTransaction(prepared),
       "sendTransaction"
-    );
+    )) as SorobanRpc.Api.SendTransactionResponse;
 
     if (submitted.status === "ERROR") {
       throw new ServiceError(

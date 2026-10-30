@@ -5,6 +5,8 @@ import { ContractAcl, type AclStatus } from "../models/ContractAcl.model";
 import { ContractAclLog } from "../models/ContractAclLog.model";
 import { CreatorKey } from "../models/CreatorKey.model";
 import { CurveMigration } from "../models/CurveMigration.model";
+import { KeyMergeProposal } from "../models/KeyMergeProposal.model";
+import { KeyMergeVote } from "../models/KeyMergeVote.model";
 import { DividendAllocation } from "../models/DividendAllocation.model";
 import { DividendClaim } from "../models/DividendClaim.model";
 import { DividendDistribution } from "../models/DividendDistribution.model";
@@ -20,6 +22,12 @@ import type {
   CurveMigrationProposalInput,
   CurveMigrationRepositoryContract,
 } from "./curve-migration.service";
+import type {
+  KeyMergeExecutionInput,
+  KeyMergeProposalInput,
+  KeyMergeProposalRepositoryContract,
+  KeyMergeVoteInput,
+} from "./key-merge-proposal.service";
 
 /**
  * TypeORM-backed adapters for the on-chain projection repositories. Each
@@ -215,7 +223,10 @@ export function createRoyaltyEarningsRepository(
         .getRawOne<{ totalEarned: string | number | null; transferCount: string | number }>();
 
       return {
-        totalEarned: row?.totalEarned === null || row?.totalEarned === undefined ? "0" : String(row.totalEarned),
+        totalEarned:
+          row?.totalEarned === null || row?.totalEarned === undefined
+            ? "0"
+            : String(row.totalEarned),
         transferCount: Number(row?.transferCount ?? 0),
       };
     },
@@ -236,7 +247,10 @@ export function createRoyaltyEarningsRepository(
         .getRawOne<{ totalClaimed: string | number | null; claimCount: string | number }>();
 
       return {
-        totalClaimed: row?.totalClaimed === null || row?.totalClaimed === undefined ? "0" : String(row.totalClaimed),
+        totalClaimed:
+          row?.totalClaimed === null || row?.totalClaimed === undefined
+            ? "0"
+            : String(row.totalClaimed),
         claimCount: Number(row?.claimCount ?? 0),
       };
     },
@@ -342,6 +356,173 @@ export function createDividendRepository(dataSource: DataSource): DividendReposi
       return claims().find({
         where: { recipientWallet: wallet },
         order: { claimedAt: "DESC", id: "DESC" },
+      });
+    },
+  };
+}
+
+export function createKeyMergeProposalRepository(
+  dataSource: DataSource
+): KeyMergeProposalRepositoryContract {
+  const proposals = (): Repository<KeyMergeProposal> => dataSource.getRepository(KeyMergeProposal);
+  const votes = (): Repository<KeyMergeVote> => dataSource.getRepository(KeyMergeVote);
+
+  return {
+    async findByKeyId(keyId, options = {}) {
+      const limit = options.limit ?? 20;
+      const qb = proposals()
+        .createQueryBuilder("p")
+        .where("(p.key_id = :keyId OR p.source_key_id = :keyId OR p.target_key_id = :keyId)", {
+          keyId,
+        });
+
+      if (options.status === "pending") {
+        qb.andWhere("p.status = :status", { status: "pending" });
+      } else if (options.status === "completed" || options.status === "executed") {
+        qb.andWhere("p.status IN (:...statuses)", { statuses: ["completed", "executed"] });
+      }
+
+      const total = await qb.getCount();
+
+      qb.orderBy("p.proposed_at", "DESC")
+        .addOrderBy("p.id", "DESC")
+        .take(limit + 1);
+
+      if (options.cursor) {
+        qb.andWhere(
+          "(p.proposed_at < :proposedAt OR (p.proposed_at = :proposedAt AND p.id < :id))",
+          { proposedAt: options.cursor.createdAt, id: options.cursor.id }
+        );
+      }
+
+      const rows = await qb.getMany();
+      const hasMore = rows.length > limit;
+      const items = hasMore ? rows.slice(0, limit) : rows;
+
+      return { items, hasMore, total };
+    },
+
+    async findByProposalId(proposalId) {
+      return proposals().findOne({ where: { proposalId } });
+    },
+
+    async findById(id) {
+      return proposals().findOne({ where: { id } });
+    },
+
+    async recordProposal(input: KeyMergeProposalInput) {
+      const existing = await proposals().findOne({ where: { proposalId: input.proposalId } });
+      if (existing) return existing;
+
+      return proposals().save(
+        proposals().create({
+          keyId: input.keyId,
+          proposalId: input.proposalId,
+          contractAddress: input.contractAddress,
+          sourceKeyId: input.sourceKeyId ?? null,
+          targetKeyId: input.targetKeyId ?? null,
+          sourceContractAddress: input.sourceContractAddress ?? null,
+          targetContractAddress: input.targetContractAddress ?? null,
+          conversionRatio: input.conversionRatio,
+          voteThreshold: input.voteThreshold,
+          status: "pending",
+          votesFor: "0.0000000",
+          votesAgainst: "0.0000000",
+          totalVotes: "0.0000000",
+          holderCount: 0,
+          thresholdReached: false,
+          votingDeadline: input.votingDeadline ?? null,
+          timelockExpiry: input.timelockExpiry ?? null,
+          migrationSummary: null,
+          proposedAt: input.proposedAt,
+          proposalTxHash: input.proposalTxHash ?? null,
+          ledgerSequence: input.ledgerSequence ?? null,
+        })
+      );
+    },
+
+    async recordVote(input: KeyMergeVoteInput) {
+      const voteRepo = votes();
+      const proposalRepo = proposals();
+
+      let vote = await voteRepo.findOne({
+        where: { proposalId: input.proposalId, voterAddress: input.voterAddress },
+      });
+
+      if (vote) {
+        vote.support = input.support;
+        vote.weight = input.weight;
+        vote.txHash = input.txHash ?? vote.txHash;
+        vote.ledgerSequence = input.ledgerSequence ?? vote.ledgerSequence;
+        vote.votedAt = input.votedAt;
+        await voteRepo.save(vote);
+      } else {
+        vote = await voteRepo.save(
+          voteRepo.create({
+            proposalId: input.proposalId,
+            voterAddress: input.voterAddress,
+            support: input.support,
+            weight: input.weight,
+            txHash: input.txHash ?? null,
+            ledgerSequence: input.ledgerSequence ?? null,
+            votedAt: input.votedAt,
+          })
+        );
+      }
+
+      const proposal = await proposalRepo.findOne({ where: { proposalId: input.proposalId } });
+      if (!proposal) return { proposal: null, vote };
+
+      const allVotes = await voteRepo.find({ where: { proposalId: input.proposalId } });
+
+      let sumFor = 0;
+      let sumAgainst = 0;
+
+      for (const v of allVotes) {
+        const w = Number(v.weight) || 0;
+        if (v.support) {
+          sumFor += w;
+        } else {
+          sumAgainst += w;
+        }
+      }
+
+      const total = sumFor + sumAgainst;
+      proposal.votesFor = sumFor.toFixed(7);
+      proposal.votesAgainst = sumAgainst.toFixed(7);
+      proposal.totalVotes = total.toFixed(7);
+      proposal.holderCount = allVotes.length;
+
+      const thresholdVal = Number(proposal.voteThreshold) || 0;
+      if (thresholdVal > 1) {
+        proposal.thresholdReached = total > 0 && (sumFor / total) * 100 >= thresholdVal;
+      } else if (thresholdVal > 0) {
+        proposal.thresholdReached = total > 0 && sumFor / total >= thresholdVal;
+      } else {
+        proposal.thresholdReached = total > 0;
+      }
+
+      await proposalRepo.save(proposal);
+      return { proposal, vote };
+    },
+
+    async recordExecution(input: KeyMergeExecutionInput) {
+      const proposal = await proposals().findOne({ where: { proposalId: input.proposalId } });
+      if (!proposal) return null;
+
+      proposal.status = "completed";
+      proposal.migrationSummary = input.migrationSummary;
+      proposal.executedAt = input.executedAt;
+      proposal.executionTxHash = input.executionTxHash ?? proposal.executionTxHash;
+      proposal.ledgerSequence = input.ledgerSequence ?? proposal.ledgerSequence;
+
+      return proposals().save(proposal);
+    },
+
+    async findVotesByProposalId(proposalId: string) {
+      return votes().find({
+        where: { proposalId },
+        order: { votedAt: "DESC" },
       });
     },
   };

@@ -17,6 +17,7 @@ import Decimal from "decimal.js";
 import { InvoiceStatus } from "../types/enums";
 import { logger } from "../observability/logger";
 import { AppError } from "../utils/http-error";
+import { isPastDueDate } from "../utils/date.utils";
 
 /**
  * Frozen state transition map optimized for performance.
@@ -135,6 +136,13 @@ export class Invoice {
 
   @Column({ name: "risk_score", type: "decimal", precision: 5, scale: 2, nullable: true })
   riskScore!: string | null;
+
+  /** Invoice category/industry (e.g. "logistics", "retail"), used to match
+   * against auto-invest rule criteria (issue #596). Freeform; not an enum,
+   * since issuers list many industries and this isn't validated elsewhere yet. */
+  @Column({ name: "category", type: "varchar", length: 64, nullable: true })
+  @Index("idx_invoices_category")
+  category!: string | null;
 
   @Column({
     type: "enum",
@@ -553,8 +561,7 @@ export class Invoice {
     if (!invoice.dueDate) return false;
 
     try {
-      const dueTime = new Date(invoice.dueDate).getTime();
-      return !isNaN(dueTime) && dueTime < referenceDate.getTime();
+      return isPastDueDate(invoice.dueDate, referenceDate);
     } catch {
       logger.warn("Invalid due date when checking overdue status", { invoiceId: invoice.id });
       return false;
@@ -614,7 +621,7 @@ export class Invoice {
    * Evaluates if the invoice due date has passed.
    */
   isExpired(referenceDate: Date = new Date()): boolean {
-    return this.dueDate ? new Date(this.dueDate).getTime() < referenceDate.getTime() : false;
+    return this.dueDate ? isPastDueDate(this.dueDate, referenceDate) : false;
   }
 
   /**

@@ -38,10 +38,7 @@
             "example": "AAAA..."
           }
         },
-        "required": [
-          "status",
-          "contractId"
-        ]
+        "required": ["status", "contractId"]
       },
       "ErrorResponse": {
         "type": "object",
@@ -56,9 +53,7 @@
       },
       "BatchPublishRequest": {
         "type": "object",
-        "required": [
-          "invoiceIds"
-        ],
+        "required": ["invoiceIds"],
         "properties": {
           "invoiceIds": {
             "type": "array",
@@ -99,10 +94,7 @@
       },
       "RevokeKYCRequest": {
         "type": "object",
-        "required": [
-          "userId",
-          "reviewerId"
-        ],
+        "required": ["userId", "reviewerId"],
         "properties": {
           "userId": {
             "type": "string",
@@ -201,11 +193,7 @@
           },
           "status": {
             "type": "string",
-            "enum": [
-              "pending",
-              "executed",
-              "expired"
-            ]
+            "enum": ["pending", "executed", "expired"]
           },
           "proposedParams": {
             "type": "object",
@@ -286,10 +274,7 @@
           },
           "status": {
             "type": "string",
-            "enum": [
-              "active",
-              "removed"
-            ]
+            "enum": ["active", "removed"]
           },
           "addedAt": {
             "type": "string",
@@ -321,10 +306,7 @@
           },
           "action": {
             "type": "string",
-            "enum": [
-              "add",
-              "remove"
-            ]
+            "enum": ["add", "remove"]
           },
           "permittedFunctions": {
             "type": "array",
@@ -459,11 +441,7 @@
             "description": "RFC 3339 payment time."
           }
         },
-        "required": [
-          "id",
-          "keyAddress",
-          "amount"
-        ]
+        "required": ["id", "keyAddress", "amount"]
       },
       "RoyaltyClaim": {
         "type": "object",
@@ -498,10 +476,7 @@
             "description": "RFC 3339 claim time."
           }
         },
-        "required": [
-          "claimId",
-          "amount"
-        ]
+        "required": ["claimId", "amount"]
       },
       "RoyaltyEarnings": {
         "type": "object",
@@ -587,12 +562,7 @@
             "description": "earned - claimed, floored at zero."
           }
         },
-        "required": [
-          "cycleId",
-          "earned",
-          "claimed",
-          "claimable"
-        ]
+        "required": ["cycleId", "earned", "claimed", "claimable"]
       },
       "DividendClaimable": {
         "type": "object",
@@ -678,10 +648,7 @@
             "description": "RFC 3339 claim time."
           }
         },
-        "required": [
-          "claimId",
-          "amount"
-        ]
+        "required": ["claimId", "amount"]
       },
       "DividendSummary": {
         "type": "object",
@@ -796,63 +763,84 @@
             "description": "RFC 3339 time of the last write."
           }
         },
-        "required": [
-          "wallet",
-          "tourCompleted"
-        ]
+        "required": ["wallet", "tourCompleted"]
       }
     }
   },
   "paths": {
-    "/api/v1/kyc/submit": {
-      "post": {
-        "summary": "Submit KYC verification",
+    "/api/v1/admin": {
+      "description": "Administrative routes are defined under this prefix."
+    },
+    "/api/v1/admin/acl": {
+      "get": {
+        "summary": "Get the contract integration ACL",
+        "description": "Returns the whitelisted contract integrations and the functions each may call, projected from ACLUpdated contract events. Cached for five minutes and invalidated whenever a new ACLUpdated event is indexed. Admin only.",
         "security": [
           {
             "bearerAuth": []
           }
         ],
         "responses": {
-          "201": {
-            "description": "Verification submitted"
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "contracts": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/AclEntry"
+                          }
+                        },
+                        "total": {
+                          "type": "integer"
+                        },
+                        "cachedAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           },
-          "401": {
-            "description": "Authentication required"
-          }
-        }
-      }
-    },
-    "/api/v1/kyc/webhook": {
-      "post": {
-        "summary": "Process a KYC provider webhook",
-        "description": "Updates verification and user KYC state after validating the provider HMAC signature.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object"
+          "Admin access required": {
+            "description": "Admin access required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "Authentication required": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
               }
             }
           }
-        },
-        "responses": {
-          "204": {
-            "description": "Webhook processed"
-          },
-          "401": {
-            "description": "Invalid webhook signature"
-          }
         }
       }
     },
-    "/api/v1/admin": {
-      "description": "Administrative routes are defined under this prefix."
-    },
-    "/api/v1/invoices/{id}/escrow-status": {
+    "/api/v1/admin/acl/log": {
       "get": {
-        "summary": "Get Soroban Escrow Status",
-        "description": "Retrieves the on-chain escrow status for a specific invoice via Soroban smart contracts.",
+        "summary": "Get the ACL add/remove history",
+        "description": "Returns the append-only audit trail of ACL changes derived from ACLUpdated events, newest first. Admin only.",
         "security": [
           {
             "bearerAuth": []
@@ -860,12 +848,24 @@
         ],
         "parameters": [
           {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "description": "Invoice ID",
+            "name": "limit",
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": "string"
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
             }
           }
         ],
@@ -875,12 +875,43 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EscrowStatusResponse"
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/AclLogEntry"
+                      }
+                    }
+                  }
                 }
               }
             }
           },
-          "400": {
+          "Admin access required": {
+            "description": "Admin access required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "Authentication required": {
+            "description": "Authentication required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "Bad Request": {
             "description": "Bad Request",
             "content": {
               "application/json": {
@@ -889,6 +920,27 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/revoke-kyc": {
+      "post": {
+        "summary": "Revoke a user's KYC approval",
+        "description": "Withdraws a previously granted KYC approval, returning the user to the pending state so they can be reviewed again. Only an approved user can be revoked. Requires the admin API key and an allow-listed source IP.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeKYCRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "KYC revoked"
           },
           "401": {
             "description": "Unauthorized",
@@ -900,8 +952,8 @@
               }
             }
           },
-          "503": {
-            "description": "Service Unavailable",
+          "404": {
+            "description": "User not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -909,6 +961,392 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "User is not currently approved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dividends/claimable": {
+      "get": {
+        "summary": "Claimable dividends per cycle",
+        "description": "Claimable dividend amounts per distribution cycle for the authenticated holder wallet, derived from synced DividendDistributed / DividendClaimed events. Cached for 30 seconds and invalidated by dividend events.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/DividendClaimable"
+                    }
+                  },
+                  "required": ["success", "data"]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dividends/claims": {
+      "get": {
+        "summary": "Dividend claim history",
+        "description": "Dividends the authenticated holder wallet has claimed, newest first, with amounts and the on-chain transaction that paid them. Cursor paginated.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size (1-100).",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Opaque cursor from the previous page's meta.nextCursor.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "success": {
+                    "type": "boolean"
+                  },
+                  "data": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/DividendClaim"
+                    }
+                  },
+                  "meta": {
+                    "type": "object",
+                    "properties": {
+                      "hasMore": {
+                        "type": "boolean"
+                      },
+                      "nextCursor": {
+                        "type": "string",
+                        "nullable": true,
+                        "description": "Opaque cursor for the next page."
+                      },
+                      "limit": {
+                        "type": "integer"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dividends/summary": {
+      "get": {
+        "summary": "Dividend totals across every cycle",
+        "description": "Lifetime earned, claimed and pending dividend totals for the authenticated holder wallet, aggregated across every distribution cycle the wallet was allocated in.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/DividendSummary"
+                    }
+                  },
+                  "required": ["success", "data"]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/investors": {
+      "post": {
+        "summary": "Acknowledge investor accreditation terms",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Acknowledge investor accreditation terms",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      },
+      "get": {
+        "summary": "List the authenticated investor's portfolios and payouts",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List the authenticated investor's portfolios and payouts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/investors/acknowledge": {
+      "post": {
+        "summary": "Acknowledge investor accreditation terms",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Acknowledge investor accreditation terms",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/investors/acknowledgement-status": {
+      "get": {
+        "summary": "Read the accreditation acknowledgement status",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Read the accreditation acknowledgement status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/investors/payouts/export/csv": {
+      "get": {
+        "summary": "Export the investor's payout history as CSV",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "CSV export",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/investors/payouts/history": {
+      "get": {
+        "summary": "List the investor's payout history",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List the investor's payout history",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/investors/risk-profile": {
+      "post": {
+        "summary": "Create the investor's risk profile",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Risk profile created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      },
+      "get": {
+        "summary": "Read the investor's risk profile",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Risk profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete the investor's risk profile",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "Authentication required"
           }
         }
       }
@@ -996,23 +1434,46 @@
         }
       }
     },
-    "/api/v1/admin/revoke-kyc": {
-      "post": {
-        "summary": "Revoke a user's KYC approval",
-        "description": "Withdraws a previously granted KYC approval, returning the user to the pending state so they can be reviewed again. Only an approved user can be revoked. Requires the admin API key and an allow-listed source IP.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RevokeKYCRequest"
-              }
+    "/api/v1/invoices/{id}/escrow-status": {
+      "get": {
+        "summary": "Get Soroban Escrow Status",
+        "description": "Retrieves the on-chain escrow status for a specific invoice via Soroban smart contracts.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Invoice ID",
+            "schema": {
+              "type": "string"
             }
           }
-        },
+        ],
         "responses": {
           "200": {
-            "description": "KYC revoked"
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EscrowStatusResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           },
           "401": {
             "description": "Unauthorized",
@@ -1024,18 +1485,8 @@
               }
             }
           },
-          "404": {
-            "description": "User not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "User is not currently approved",
+          "503": {
+            "description": "Service Unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -1187,11 +1638,7 @@
             "description": "Filter by status; `pending` requires creator access",
             "schema": {
               "type": "string",
-              "enum": [
-                "all",
-                "pending",
-                "executed"
-              ],
+              "enum": ["all", "pending", "executed"],
               "default": "all"
             }
           }
@@ -1248,10 +1695,102 @@
         }
       }
     },
-    "/api/v1/admin/acl": {
+    "/api/v1/kyc/submit": {
+      "post": {
+        "summary": "Submit KYC verification",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Verification submitted"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/kyc/webhook": {
+      "post": {
+        "summary": "Process a KYC provider webhook",
+        "description": "Updates verification and user KYC state after validating the provider HMAC signature.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Webhook processed"
+          },
+          "401": {
+            "description": "Invalid webhook signature"
+          }
+        }
+      }
+    },
+    "/api/v1/marketplace": {
       "get": {
-        "summary": "Get the contract integration ACL",
-        "description": "Returns the whitelisted contract integrations and the functions each may call, projected from ACLUpdated contract events. Cached for five minutes and invalidated whenever a new ACLUpdated event is indexed. Admin only.",
+        "summary": "List invoices available on the secondary marketplace",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List invoices available on the secondary marketplace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/marketplace/invoices": {
+      "get": {
+        "summary": "List invoices available on the secondary marketplace",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List invoices available on the secondary marketplace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/onboarding/complete": {
+      "post": {
+        "summary": "Record onboarding tour completion",
+        "description": "Records that the authenticated wallet finished the onboarding tour. Idempotent: re-completing keeps the original completedAt timestamp.",
         "security": [
           {
             "bearerAuth": []
@@ -1269,40 +1808,16 @@
                       "type": "boolean"
                     },
                     "data": {
-                      "type": "object",
-                      "properties": {
-                        "contracts": {
-                          "type": "array",
-                          "items": {
-                            "$ref": "#/components/schemas/AclEntry"
-                          }
-                        },
-                        "total": {
-                          "type": "integer"
-                        },
-                        "cachedAt": {
-                          "type": "string",
-                          "format": "date-time"
-                        }
-                      }
+                      "$ref": "#/components/schemas/OnboardingStatus"
                     }
-                  }
+                  },
+                  "required": ["success", "data"]
                 }
               }
             }
           },
-          "Admin access required": {
-            "description": "Admin access required",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "Authentication required": {
-            "description": "Authentication required",
+          "401": {
+            "description": "Missing or invalid authentication token",
             "content": {
               "application/json": {
                 "schema": {
@@ -1314,10 +1829,77 @@
         }
       }
     },
-    "/api/v1/admin/acl/log": {
+    "/api/v1/onboarding/status": {
       "get": {
-        "summary": "Get the ACL add/remove history",
-        "description": "Returns the append-only audit trail of ACL changes derived from ACLUpdated events, newest first. Admin only.",
+        "summary": "Onboarding tour status",
+        "description": "Whether the authenticated wallet has completed the onboarding tour, and when. Called on every app load, so it is a single indexed row lookup.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/OnboardingStatus"
+                    }
+                  },
+                  "required": ["success", "data"]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/portfolio": {
+      "get": {
+        "summary": "Read the authenticated investor's portfolio",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Read the authenticated investor's portfolio",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/royalties/earnings": {
+      "get": {
+        "summary": "Creator royalty earnings",
+        "description": "Lifetime royalty accruals, claims and the outstanding balance for the authenticated creator, with a per-transfer breakdown. Creator-only (seller or both) and scoped to the token's wallet. Figures are cached for 30 seconds and invalidated by royalty events.",
         "security": [
           {
             "bearerAuth": []
@@ -1325,24 +1907,15 @@
         ],
         "parameters": [
           {
-            "name": "limit",
+            "name": "transfer_limit",
             "in": "query",
             "required": false,
+            "description": "Maximum number of royalty transfers to return (1-200).",
             "schema": {
               "type": "integer",
               "minimum": 1,
               "maximum": 200,
               "default": 50
-            }
-          },
-          {
-            "name": "offset",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "default": 0
             }
           }
         ],
@@ -1358,9 +1931,158 @@
                       "type": "boolean"
                     },
                     "data": {
-                      "type": "array",
-                      "items": {
-                        "$ref": "#/components/schemas/AclLogEntry"
+                      "$ref": "#/components/schemas/RoyaltyEarnings"
+                    }
+                  },
+                  "required": ["success", "data"]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The authenticated wallet is not a creator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin": {
+      "description": "Administrative routes are defined under this prefix."
+    },
+    "/api/v1/investors/{wallet}/onboarding-bonus": {
+      "get": {
+        "summary": "Get investor onboarding bonus status",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "wallet", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Claim status; unclaimed wallets return is_claimed false" },
+          "401": { "description": "Authentication required" },
+          "403": { "description": "Wallet does not match the authenticated user" }
+        }
+      }
+    },
+    "/api/v1/investors/{wallet}/alert-preferences": {
+      "get": {
+        "summary": "Get investor alert preferences",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "wallet", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Current preferences; missing preference records default to enabled" },
+          "401": { "description": "Authentication required" },
+          "403": { "description": "Wallet does not match the authenticated user" }
+        }
+      }
+    },
+    "/api/v1/invoices/{invoice_id}/yield-adjustment": {
+      "get": {
+        "summary": "Get the latest invoice yield adjustment",
+        "parameters": [
+          { "name": "invoice_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "Latest settlement yield adjustment" } }
+      }
+    },
+    "/api/v1/invoices/{invoice_id}/yield-adjustment/history": {
+      "get": {
+        "summary": "Get invoice yield adjustment history",
+        "parameters": [
+          { "name": "invoice_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "Per-settlement yield adjustment history" } }
+      }
+    },
+    "/api/v1/admin/onboarding-bonus/pool-balance": {
+      "get": {
+        "summary": "Get onboarding bonus pool balance",
+        "description": "Reads the configured pool balance storage key from the bonus contract. Requires an allow-listed admin IP.",
+        "responses": {
+          "200": { "description": "On-chain pool balance" },
+          "403": { "description": "Client IP is not allow-listed" },
+          "503": { "description": "Pool contract is not configured" }
+        }
+      }
+    },
+    "/api/v1/invoices/{id}/escrow-status": {
+    "/api/v1/royalties/history": {
+      "get": {
+        "summary": "Creator royalty claim history",
+        "description": "Royalties the authenticated creator has claimed, newest first, with the on-chain transaction that paid them. Cursor paginated and creator-only.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size (1-100).",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Opaque cursor from the previous page's meta.nextCursor.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "success": {
+                    "type": "boolean"
+                  },
+                  "data": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/RoyaltyClaim"
+                    }
+                  },
+                  "meta": {
+                    "type": "object",
+                    "properties": {
+                      "hasMore": {
+                        "type": "boolean"
+                      },
+                      "nextCursor": {
+                        "type": "string",
+                        "nullable": true,
+                        "description": "Opaque cursor for the next page."
+                      },
+                      "limit": {
+                        "type": "integer"
                       }
                     }
                   }
@@ -1368,8 +2090,8 @@
               }
             }
           },
-          "Admin access required": {
-            "description": "Admin access required",
+          "401": {
+            "description": "Missing or invalid authentication token",
             "content": {
               "application/json": {
                 "schema": {
@@ -1378,8 +2100,8 @@
               }
             }
           },
-          "Authentication required": {
-            "description": "Authentication required",
+          "403": {
+            "description": "The authenticated wallet is not a creator",
             "content": {
               "application/json": {
                 "schema": {
@@ -1387,9 +2109,107 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v1/seller": {
+      "get": {
+        "summary": "Read the authenticated seller's dashboard",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Read the authenticated seller's dashboard",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
           },
-          "Bad Request": {
-            "description": "Bad Request",
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/seller/dashboard": {
+      "get": {
+        "summary": "Read the authenticated seller's dashboard",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Read the authenticated seller's dashboard",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/subscriptions/status": {
+      "get": {
+        "summary": "Gated-content subscription status",
+        "description": "Whether a wallet holds the minimum key balance required to access gated content, with the expiry ledger and whole days remaining. Public by design: a content gate has to answer before the visitor is known to the platform, and the response only reflects public on-chain holdings. Cached for 30 seconds and evicted when a holding-change event is observed.",
+        "parameters": [
+          {
+            "name": "wallet",
+            "in": "query",
+            "required": false,
+            "description": "Stellar account (strkey) public key to check.",
+            "schema": {
+              "type": "string",
+              "pattern": "^G[A-Z2-7]{55}$"
+            }
+          },
+          {
+            "name": "key_id",
+            "in": "query",
+            "required": false,
+            "description": "Soroban contract id, or the key identifier the contract uses.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/SubscriptionStatus"
+                    }
+                  },
+                  "required": ["success", "data"]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "'wallet' is missing or malformed, or 'key_id' is missing or malformed",
             "content": {
               "application/json": {
                 "schema": {
@@ -1552,169 +2372,9 @@
         }
       }
     },
-    "/api/v1/royalties/earnings": {
+    "/api/v1/watchlist": {
       "get": {
-        "summary": "Creator royalty earnings",
-        "description": "Lifetime royalty accruals, claims and the outstanding balance for the authenticated creator, with a per-transfer breakdown. Creator-only (seller or both) and scoped to the token's wallet. Figures are cached for 30 seconds and invalidated by royalty events.",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "transfer_limit",
-            "in": "query",
-            "required": false,
-            "description": "Maximum number of royalty transfers to return (1-200).",
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 200,
-              "default": 50
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "success": {
-                      "type": "boolean"
-                    },
-                    "data": {
-                      "$ref": "#/components/schemas/RoyaltyEarnings"
-                    }
-                  },
-                  "required": [
-                    "success",
-                    "data"
-                  ]
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or invalid authentication token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "The authenticated wallet is not a creator",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/royalties/history": {
-      "get": {
-        "summary": "Creator royalty claim history",
-        "description": "Royalties the authenticated creator has claimed, newest first, with the on-chain transaction that paid them. Cursor paginated and creator-only.",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "description": "Page size (1-100).",
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 100,
-              "default": 20
-            }
-          },
-          {
-            "name": "cursor",
-            "in": "query",
-            "required": false,
-            "description": "Opaque cursor from the previous page's meta.nextCursor.",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "success": {
-                    "type": "boolean"
-                  },
-                  "data": {
-                    "type": "array",
-                    "items": {
-                      "$ref": "#/components/schemas/RoyaltyClaim"
-                    }
-                  },
-                  "meta": {
-                    "type": "object",
-                    "properties": {
-                      "hasMore": {
-                        "type": "boolean"
-                      },
-                      "nextCursor": {
-                        "type": "string",
-                        "nullable": true,
-                        "description": "Opaque cursor for the next page."
-                      },
-                      "limit": {
-                        "type": "integer"
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or invalid authentication token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "The authenticated wallet is not a creator",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/dividends/claimable": {
-      "get": {
-        "summary": "Claimable dividends per cycle",
-        "description": "Claimable dividend amounts per distribution cycle for the authenticated holder wallet, derived from synced DividendDistributed / DividendClaimed events. Cached for 30 seconds and invalidated by dividend events.",
+        "summary": "List the authenticated user's watchlist",
         "security": [
           {
             "bearerAuth": []
@@ -1722,309 +2382,125 @@
         ],
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "Watchlist",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "success": {
-                      "type": "boolean"
-                    },
-                    "data": {
-                      "$ref": "#/components/schemas/DividendClaimable"
-                    }
-                  },
-                  "required": [
-                    "success",
-                    "data"
-                  ]
+                  "type": "object"
                 }
               }
             }
           },
           "401": {
-            "description": "Missing or invalid authentication token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
+            "description": "Authentication required"
           }
         }
-      }
-    },
-    "/api/v1/dividends/claims": {
-      "get": {
-        "summary": "Dividend claim history",
-        "description": "Dividends the authenticated holder wallet has claimed, newest first, with amounts and the on-chain transaction that paid them. Cursor paginated.",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "description": "Page size (1-100).",
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 100,
-              "default": 20
-            }
-          },
-          {
-            "name": "cursor",
-            "in": "query",
-            "required": false,
-            "description": "Opaque cursor from the previous page's meta.nextCursor.",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "success": {
-                    "type": "boolean"
-                  },
-                  "data": {
-                    "type": "array",
-                    "items": {
-                      "$ref": "#/components/schemas/DividendClaim"
-                    }
-                  },
-                  "meta": {
-                    "type": "object",
-                    "properties": {
-                      "hasMore": {
-                        "type": "boolean"
-                      },
-                      "nextCursor": {
-                        "type": "string",
-                        "nullable": true,
-                        "description": "Opaque cursor for the next page."
-                      },
-                      "limit": {
-                        "type": "integer"
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or invalid authentication token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/dividends/summary": {
-      "get": {
-        "summary": "Dividend totals across every cycle",
-        "description": "Lifetime earned, claimed and pending dividend totals for the authenticated holder wallet, aggregated across every distribution cycle the wallet was allocated in.",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "success": {
-                      "type": "boolean"
-                    },
-                    "data": {
-                      "$ref": "#/components/schemas/DividendSummary"
-                    }
-                  },
-                  "required": [
-                    "success",
-                    "data"
-                  ]
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or invalid authentication token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/subscriptions/status": {
-      "get": {
-        "summary": "Gated-content subscription status",
-        "description": "Whether a wallet holds the minimum key balance required to access gated content, with the expiry ledger and whole days remaining. Public by design: a content gate has to answer before the visitor is known to the platform, and the response only reflects public on-chain holdings. Cached for 30 seconds and evicted when a holding-change event is observed.",
-        "parameters": [
-          {
-            "name": "wallet",
-            "in": "query",
-            "required": false,
-            "description": "Stellar account (strkey) public key to check.",
-            "schema": {
-              "type": "string",
-              "pattern": "^G[A-Z2-7]{55}$"
-            }
-          },
-          {
-            "name": "key_id",
-            "in": "query",
-            "required": false,
-            "description": "Soroban contract id, or the key identifier the contract uses.",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "success": {
-                      "type": "boolean"
-                    },
-                    "data": {
-                      "$ref": "#/components/schemas/SubscriptionStatus"
-                    }
-                  },
-                  "required": [
-                    "success",
-                    "data"
-                  ]
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "'wallet' is missing or malformed, or 'key_id' is missing or malformed",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/onboarding/status": {
-      "get": {
-        "summary": "Onboarding tour status",
-        "description": "Whether the authenticated wallet has completed the onboarding tour, and when. Called on every app load, so it is a single indexed row lookup.",
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "success": {
-                      "type": "boolean"
-                    },
-                    "data": {
-                      "$ref": "#/components/schemas/OnboardingStatus"
-                    }
-                  },
-                  "required": [
-                    "success",
-                    "data"
-                  ]
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or invalid authentication token",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/onboarding/complete": {
+      },
       "post": {
-        "summary": "Record onboarding tour completion",
-        "description": "Records that the authenticated wallet finished the onboarding tour. Idempotent: re-completing keeps the original completedAt timestamp.",
+        "summary": "Add an invoice to the watchlist",
         "security": [
           {
             "bearerAuth": []
           }
         ],
         "responses": {
-          "200": {
-            "description": "OK",
+          "201": {
+            "description": "Added",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "success": {
-                      "type": "boolean"
-                    },
-                    "data": {
-                      "$ref": "#/components/schemas/OnboardingStatus"
-                    }
-                  },
-                  "required": [
-                    "success",
-                    "data"
-                  ]
+                  "type": "object"
                 }
               }
             }
           },
           "401": {
-            "description": "Missing or invalid authentication token",
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/v1/watchlist/{invoiceId}": {
+      "post": {
+        "summary": "Add an invoice to the watchlist",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "invoiceId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Added",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Remove an invoice from the watchlist",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "invoiceId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/ready": {
+      "get": {
+        "summary": "Readiness probe",
+        "responses": {
+          "200": {
+            "description": "Service is ready",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service is not ready",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
                 }
               }
             }

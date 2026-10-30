@@ -2,7 +2,7 @@ import cron from "node-cron";
 import { DataSource } from "typeorm";
 import { Invoice } from "../models/Invoice.model";
 import { InvoiceStatus } from "../types/enums";
-import { SettlementService } from "../services/settlement.service";
+import { SettlementService, SYSTEM_SETTLEMENT_ACTOR } from "../services/settlement.service";
 import { logger } from "../observability/logger";
 
 export interface SettlementWorkerDependencies {
@@ -51,9 +51,10 @@ export class SettlementWorker {
 
   /**
    * Process all invoices that have reached maturity date.
-   * This is the main settlement logic triggered by the cron job.
+   * This is the main settlement logic triggered by the cron job. It is public
+   * so it can be exercised directly without waiting for a cron tick.
    */
-  private async processMaturedInvoices(): Promise<void> {
+  async processMaturedInvoices(): Promise<void> {
     this.isRunning = true;
     const startTime = Date.now();
 
@@ -103,7 +104,12 @@ export class SettlementWorker {
           await settlementService.settleInvoice({
             invoiceId: invoice.id,
             proceeds,
-            actorWallet: invoice.sellerWallet || "system",
+            // Automated settlement is performed by the system, not by the
+            // seller. Passing the seller's wallet here made the service treat
+            // the value as an authenticated actor, which then failed the
+            // seller wallet check for any invoice without a recorded wallet.
+            actorWallet: SYSTEM_SETTLEMENT_ACTOR,
+            systemTrigger: "system_matured",
             sellerId: invoice.sellerId,
           });
 
@@ -141,7 +147,11 @@ export class SettlementWorker {
   /**
    * Manually trigger settlement processing (for admin endpoint).
    */
-  async triggerManualSettlement(invoiceId: string, proceeds: string, actorWallet: string): Promise<void> {
+  async triggerManualSettlement(
+    invoiceId: string,
+    proceeds: string,
+    actorWallet: string
+  ): Promise<void> {
     logger.info("Manual settlement triggered", {
       invoice_id: invoiceId,
       proceeds,

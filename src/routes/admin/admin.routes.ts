@@ -9,6 +9,7 @@ import { requireAdminRole } from "@/middleware/require-admin-role.middleware";
 import type { AuthService } from "@/services/auth.service";
 import type { AclService } from "@/services/acl.service";
 import type { InvoiceService } from "@/services/invoice.service";
+import type { InvestorInsightsService } from "@/services/investor-insights.service";
 import type { AdminUserService } from "@/services/admin-user.service";
 import { createAdminUsersRouter } from "./users.routes";
 import type { InvoiceExtensionService } from "@/services/invoice-extension.service";
@@ -19,6 +20,8 @@ import type { FeeScheduleService } from "@/services/fee-schedule.service";
 import { approveKYC } from "./approve-kyc";
 import { rejectKYC } from "./reject-kyc";
 import { revokeKYC } from "./revoke-kyc";
+import { KycService } from "@/services/kyc.service";
+import { createKycController } from "@/controllers/kyc.controller";
 import { approveInvoice } from "./approve-invoice";
 import { rejectInvoice } from "./reject-invoice";
 import { createAclController } from "./acl";
@@ -28,11 +31,13 @@ import { createAnalyticsSnapshotService } from "@/services/analytics-snapshot.se
 import { createAdminAnalyticsTrendsRouter } from "./analytics-trends.routes";
 import { createAdminSettlementRouter } from "./settlement.routes";
 import { createAdminFeesRouter } from "./fees.routes";
+import { createWaitlistRouter } from "./waitlist.routes";
 import { AppError } from "@/utils/http-error";
 import { logger } from "@/observability/logger";
 import type { AuthenticatedRequest } from "@/types/auth";
 import { listInvoices } from "./list-invoices";
 import { reviewInvoice } from "./review-invoice";
+import type { WaitlistService } from "@/services/waitlist.service";
 
 export interface AdminRouterDependencies {
   dataSource: DataSource;
@@ -40,6 +45,7 @@ export interface AdminRouterDependencies {
   authService: AuthService;
   aclService?: AclService;
   invoiceService?: InvoiceService;
+  investorInsightsService?: InvestorInsightsService;
   /** Optional: enables the /users management endpoints (admin JWT required). */
   adminUserService?: AdminUserService;
   extensionService?: InvoiceExtensionService;
@@ -48,8 +54,12 @@ export interface AdminRouterDependencies {
   /** Optional: enables POST /invoices/:invoiceId/settle for admin settlement. */
   adminSettlementService?: AdminSettlementService;
   adminWallets?: string[];
+  kycService?: KycService;
   invoiceEscrowContractService?: InvoiceEscrowContractService;
   feeScheduleService?: FeeScheduleService;
+  /** Optional: enables waitlist management endpoints (issue #599) */
+  waitlistService?: WaitlistService;
+  notificationService?: import("@/services/notification.service").NotificationService;
 }
 
 interface ExtensionReviewBody {
@@ -92,6 +102,8 @@ function lazyRouter(create: () => Router): Router {
 export function createAdminRouter({
   dataSource,
   allowedCidrs,
+  invoiceService: _invoiceService,
+  investorInsightsService,
   authService,
   aclService,
   invoiceService,
@@ -100,8 +112,11 @@ export function createAdminRouter({
   metricsService: _metricsService,
   adminSettlementService,
   adminWallets = [],
+  kycService,
   invoiceEscrowContractService,
-  feeScheduleService
+  feeScheduleService,
+  waitlistService: _waitlistService,
+  notificationService: _notificationService
 }: AdminRouterDependencies): Router {
   const router = Router();
 
@@ -146,6 +161,23 @@ export function createAdminRouter({
 
   router.post("/revoke-kyc", (req, res) => {
     revokeKYC(req, res, dataSource);
+  });
+
+  if (investorInsightsService) {
+    router.get("/onboarding-bonus/pool-balance", async (_req, res, next) => {
+      try {
+        const balance = await investorInsightsService.getBonusPoolBalance();
+        res.status(200).json({ success: true, data: { pool_balance: balance } });
+      } catch (error) {
+        next(error);
+      }
+    });
+  }
+
+  router.patch("/kyc/:id/review", (req, res, next) => {
+    const service = kycService ?? new KycService(dataSource, process.env.KYC_WEBHOOK_SECRET || "");
+    const controller = createKycController(service);
+    return controller.review(req, res, next);
   });
 
   if (invoiceService) {
@@ -285,6 +317,14 @@ export function createAdminRouter({
   // ---- Fee schedule management (issue #592) ----
   if (feeScheduleService) {
     router.use("/", createAdminFeesRouter(feeScheduleService));
+  }
+
+  // ---- Waitlist management (issue #599) ----
+  if (_waitlistService) {
+    router.use(
+      "/waitlist",
+      createWaitlistRouter(_waitlistService, authService, _notificationService)
+    );
   }
 
   return router;

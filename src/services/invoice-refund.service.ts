@@ -1,4 +1,4 @@
-import { Repository, LessThan } from "typeorm";
+import { Repository, LessThan, In } from "typeorm";
 import { Invoice } from "../models/Invoice.model";
 import { Investment } from "../models/Investment.model";
 import { InvoiceStatus } from "../types/enums";
@@ -37,10 +37,7 @@ export class InvoiceRefundService {
     return { canRefund: true };
   }
 
-  async refundInvestment(
-    invoiceId: string,
-    walletAddress: string
-  ): Promise<void> {
+  async refundInvestment(invoiceId: string, walletAddress: string): Promise<void> {
     const invoice = await this.invoiceRepo.findOne({ where: { id: invoiceId } });
 
     if (!invoice) {
@@ -55,7 +52,7 @@ export class InvoiceRefundService {
     });
 
     if (!investment) {
-      throw new ServiceError("INVESTMENT_NOT_FOUND", "Investment record not found", 404);
+      throw new ServiceError("investment_not_found", "Investment record not found", 404);
     }
 
     const { canRefund, reason } = await this.canRefund(invoiceId);
@@ -84,8 +81,18 @@ export class InvoiceRefundService {
   async getRefundableInvoices(walletAddress: string): Promise<Invoice[]> {
     const now = new Date();
 
+    // Scope to invoices this wallet actually invested in - without this
+    // filter every investor's refund list leaked every other investor's
+    // expired-but-unfunded invoices.
+    const investments = await this.investmentRepo.find({
+      where: { investorWallet: walletAddress },
+    });
+    const invoiceIds = [...new Set(investments.map((investment) => investment.invoiceId))];
+    if (invoiceIds.length === 0) return [];
+
     return this.invoiceRepo.find({
       where: {
+        id: In(invoiceIds),
         fundingDeadline: LessThan(now),
         status: InvoiceStatus.PUBLISHED,
         investments: { investorWallet: walletAddress },

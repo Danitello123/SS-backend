@@ -20,6 +20,7 @@ export interface NotificationInput {
   title: string;
   message: string;
   data?: Record<string, unknown>;
+  dedupeKey?: string | null;
 }
 
 /** Satisfied by `NotificationService.createNotifications`. */

@@ -147,9 +147,40 @@ export class IPFSService {
     }
   }
 
+  /** Downloads a pinned file from the public gateway and returns its bytes. */
+  async fetchFile(cid: string): Promise<Buffer> {
+    const targetUrl = `${this.config.gatewayUrl}/ipfs/${cid}`;
+
+    try {
+      const response = await this.fetchImplementation(targetUrl, {
+        method: "GET",
+        headers: withCorrelationHeaders({}),
+      });
+
+      if (!response.ok) {
+        throw new Error(`IPFS gateway returned ${response.status}: ${response.statusText}`);
+      }
+
+      return Buffer.from(await response.arrayBuffer());
+    } catch (error) {
+      if (error instanceof ServiceError) throw error;
+
+      this.logger.error("Failed to fetch IPFS document", {
+        cid,
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      throw new ServiceError(
+        "ipfs_document_unavailable",
+        "The requested IPFS document is currently unavailable from the gateway. Please try again in a few moments.",
+        503
+      );
+    }
+  }
+
   async generateSignedUrl(cid: string): Promise<string> {
     const gatewayUrl = this.config.gatewayUrl;
-    // Pinata V3 uses /files/CID, but /ipfs/CID is often supported on gateways. 
+    // Pinata V3 uses /files/CID, but /ipfs/CID is often supported on gateways.
     // We'll use /ipfs/CID as default for backward compatibility with v2 uploads.
     const targetUrl = `${gatewayUrl}/ipfs/${cid}`;
     const expires = this.config.gatewayTokenTtlSeconds;
@@ -172,7 +203,7 @@ export class IPFSService {
             url: targetUrl,
             expires,
             date: Math.floor(Date.now() / 1000),
-            method: "GET"
+            method: "GET",
           }),
         }
       );
@@ -182,18 +213,18 @@ export class IPFSService {
         throw new Error(`Pinata API returned ${response.status}: ${errorText}`);
       }
 
-      const result = await response.json() as { data?: string; url?: string };
+      const result = (await response.json()) as { data?: string; url?: string };
       // Pinata V3 usually returns the url directly or inside a data wrapper
       const signedUrl = result.data || result.url;
-      
+
       if (!signedUrl) {
-         throw new Error("Pinata API did not return a valid URL in response");
+        throw new Error("Pinata API did not return a valid URL in response");
       }
 
       return signedUrl;
     } catch (error) {
       if (error instanceof ServiceError) throw error;
-      
+
       this.logger.error("Failed to generate signed IPFS URL", {
         cid,
         error: error instanceof Error ? error.message : String(error),

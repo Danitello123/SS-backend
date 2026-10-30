@@ -10,6 +10,10 @@ export interface PriceHistoryRouterDependencies {
   priceService: SecondaryMarketPriceService;
 }
 
+interface InvoicePriceHistoryRequest extends AuthenticatedRequest {
+  params: { invoiceId: string };
+}
+
 export function createPriceHistoryRouter({
   authService,
   priceService,
@@ -20,7 +24,7 @@ export function createPriceHistoryRouter({
   router.get(
     "/invoices/:invoiceId/price-history",
     auth,
-    async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    async (req: InvoicePriceHistoryRequest, res: Response, next: NextFunction) => {
       try {
         const invoiceId = Array.isArray(req.params.invoiceId)
           ? req.params.invoiceId[0]

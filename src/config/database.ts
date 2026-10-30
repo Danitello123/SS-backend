@@ -62,6 +62,11 @@ const baseConfig = {
   entities: [entitiesPath],
   migrations: [migrationsPath],
   migrationsTableName: "migrations",
+  // Postgres refuses `ALTER TYPE ... ADD VALUE` inside a transaction block, so
+  // migrations that change enums opt out by setting `transaction = false`.
+  // TypeORM rejects such overrides under the default "all" mode, which wraps
+  // the entire run in one transaction; "each" honours the per-migration flag.
+  migrationsTransactionMode: "each" as const,
   migrationsRun: !isDevelopment,
 };
 

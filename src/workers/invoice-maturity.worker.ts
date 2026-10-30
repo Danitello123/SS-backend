@@ -25,7 +25,7 @@ export interface MaturedInvoice {
 }
 
 export interface MaturedInvoiceRepository {
-  /** Published or funded invoices whose due date is on or before `asOf`. */
+  /** Published or funded invoices whose funding deadline or due date passed. */
   findMaturedInvoices(asOf: Date, limit: number): Promise<MaturedInvoice[]>;
   /**
    * Moves an under-funded invoice to `failed`. Returns null when the invoice
@@ -244,10 +244,10 @@ class TypeOrmMaturedInvoiceRepository implements MaturedInvoiceRepository {
   async findMaturedInvoices(asOf: Date, limit: number): Promise<MaturedInvoice[]> {
     const rows = await this.dataSource.getRepository(Invoice).find({
       select: { id: true, status: true, amount: true },
-      where: {
-        status: In([InvoiceStatus.PUBLISHED, InvoiceStatus.FUNDED]),
-        dueDate: LessThanOrEqual(toDateOnly(asOf) as unknown as Date),
-      },
+      where: [
+        { status: In([InvoiceStatus.PUBLISHED, InvoiceStatus.FUNDED]), dueDate: LessThanOrEqual(toDateOnly(asOf) as unknown as Date) },
+        { status: InvoiceStatus.PUBLISHED, fundingDeadline: LessThanOrEqual(asOf) },
+      ],
       order: { dueDate: "ASC" },
       take: limit,
     });

@@ -48,12 +48,20 @@ import { createSecondaryMarketService } from "./services/secondary-market.servic
 import { createWatchlistService } from "./services/watchlist.service";
 import { createSettlementWorker } from "./workers/settlement.worker";
 import { scheduleAnalyticsSnapshotJob } from "./workers/analytics-snapshot.worker";
+import {
+  scheduleSubscriptionExpiryJob,
+  buildSubscriptionExpiryNotifier,
+} from "./workers/subscription-expiry.worker";
 import { createFeeScheduleService } from "./services/fee-schedule.service";
 import { getRedisClient } from "./config/redis";
 import { createIssuerReputationService } from "./services/issuer-reputation.service";
 import { createInvestorRiskProfileService } from "./services/investor-risk-profile.service";
 import { createInvoiceDraftService } from "./services/invoice-draft.service";
-import { PendingStellarConfirmationWorker } from "./workers/reconcile-pending-stellar-state.worker";
+import { createWaitlistService } from "./services/waitlist.service";
+import { createBenchmarkService } from "./services/benchmark.service";
+import { createReferralTierService } from "./services/referral-tier.service";
+import { createYieldBoostService } from "./services/yield-boost.service";
+import { createSecondaryAuctionService } from "./services/secondary-auction.service";
 
 export async function bootstrap(): Promise<{
   server: Server;
@@ -221,6 +229,15 @@ export async function bootstrap(): Promise<{
   // ---- Feature: Fee Schedule Management (issue #592) ----
   const feeScheduleService = createFeeScheduleService(dataSource, getRedisClient());
 
+  // ---- Feature: Waitlist Management (issue #599) ----
+  const waitlistService = createWaitlistService(dataSource, logger);
+
+  // Contract event indexes (#676-#679)
+  const benchmarkService = createBenchmarkService(dataSource);
+  const referralTierService = createReferralTierService(dataSource);
+  const yieldBoostService = createYieldBoostService(dataSource);
+  const secondaryAuctionService = createSecondaryAuctionService(dataSource);
+
   const app = createApp({
     authService,
     notificationService,
@@ -242,6 +259,7 @@ export async function bootstrap(): Promise<{
     aclService: projections.aclService,
     creatorKeyService: projections.creatorKeyService,
     curveMigrationService: projections.curveMigrationService,
+    keyMergeProposalService: projections.keyMergeProposalService,
     secondaryMarketService,
     watchlistService,
     settlementWorker,
@@ -250,6 +268,11 @@ export async function bootstrap(): Promise<{
     issuerReputationService,
     investorRiskProfileService,
     draftService,
+    waitlistService,
+    benchmarkService,
+    referralTierService,
+    yieldBoostService,
+    secondaryAuctionService,
     config,
     logger,
     metricsEnabled: config.observability.metricsEnabled,
@@ -258,6 +281,7 @@ export async function bootstrap(): Promise<{
   const server = app.listen(config.port, () => {
     logger.info("Server running", { port: config.port });
   });
+  server.on("close", () => eventIndexer?.stop());
 
   // Settlement outcomes for notification dispatch; the state machine effects
   // above already notify sellers and investors of each status change.
@@ -275,13 +299,40 @@ export async function bootstrap(): Promise<{
   // ---- Start daily analytics snapshot cron (midnight UTC) ----
   const snapshotScheduler = scheduleAnalyticsSnapshotJob(dataSource);
 
+  // ---- Start daily subscription expiry notification check (midnight UTC) ----
+  const subscriptionExpiryNotifier = buildSubscriptionExpiryNotifier(
+    dataSource,
+    createNotificationService(dataSource),
+    logger
+  );
+  const subscriptionExpiryScheduler = scheduleSubscriptionExpiryJob(subscriptionExpiryNotifier, logger);
+
   // ---- Start settlement worker cron (hourly) ----
   settlementWorker.start("0 * * * *");
 
+  // All deployed Soroban contracts whose events feed the indexer. The
+  // read-model projections (creator key, ACL, curve migration, atomic swap,
+  // royalty, dividend) dispatch by event topic rather than contract id, so
+  // their events are only ever seen if the contract that emits them is
+  // actually polled here.
+  const sorobanEventContractIds = Array.from(
+    new Set(
+      [
+        config.sorobanEscrow.contractId,
+        sorobanConfig.escrowContractId,
+        sorobanConfig.paymentDistributorContractId,
+        sorobanConfig.subscriptionContractId,
+        sorobanConfig.tokenContractId,
+      ].filter((id): id is string => Boolean(id))
+    )
+  );
+
   const eventIndexer =
-    config.sorobanIndexer.enabled && config.sorobanEscrow.contractId && config.sorobanEscrow.rpcUrl
+    config.sorobanIndexer.enabled &&
+    sorobanEventContractIds.length > 0 &&
+    config.sorobanEscrow.rpcUrl
       ? new EventIndexerService({
-          contractIds: [config.sorobanEscrow.contractId],
+          contractIds: sorobanEventContractIds,
           rpcUrl: config.sorobanEscrow.rpcUrl,
           dataSource,
           logger,
@@ -302,6 +353,7 @@ export async function bootstrap(): Promise<{
     }
     void maturityWorker.stop();
     snapshotScheduler.stop();
+    subscriptionExpiryScheduler.stop();
     settlementWorker.stop();
     if (pendingStellarConfirmationWorker) {
       void pendingStellarConfirmationWorker.stop();

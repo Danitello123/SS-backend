@@ -12,6 +12,14 @@ export interface AccreditationRouterDependencies {
   adminWallets?: string[];
 }
 
+interface WalletParamsRequest extends AuthenticatedRequest {
+  params: { wallet: string };
+}
+
+interface WalletEligibilityParamsRequest extends AuthenticatedRequest {
+  params: { wallet: string; invoiceId: string };
+}
+
 export function createAccreditationRouter({
   authService,
   accreditationService,
@@ -24,11 +32,9 @@ export function createAccreditationRouter({
   router.get(
     "/:wallet",
     auth,
-    async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    async (req: WalletParamsRequest, res: Response, next: NextFunction) => {
       try {
-        const wallet = Array.isArray(req.params.wallet)
-          ? req.params.wallet[0]
-          : req.params.wallet;
+        const wallet = String(req.params.wallet);
         const accreditation = await accreditationService.getAccreditation(wallet);
 
         res.json({
@@ -46,12 +52,10 @@ export function createAccreditationRouter({
   router.patch(
     "/:wallet",
     auth,
-    requireAdminJWT,
-    async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    requireAdmin(adminWallets),
+    async (req: WalletParamsRequest, res: Response, next: NextFunction) => {
       try {
-        const wallet = Array.isArray(req.params.wallet)
-          ? req.params.wallet[0]
-          : req.params.wallet;
+        const wallet = String(req.params.wallet);
         const { tier, verificationSource } = req.body;
 
         if (!Object.values(AccreditationTier).includes(tier)) {
@@ -79,14 +83,10 @@ export function createAccreditationRouter({
   router.get(
     "/:wallet/eligibility/:invoiceId",
     auth,
-    async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    async (req: WalletEligibilityParamsRequest, res: Response, next: NextFunction) => {
       try {
-        const wallet = Array.isArray(req.params.wallet)
-          ? req.params.wallet[0]
-          : req.params.wallet;
-        const invoiceId = Array.isArray(req.params.invoiceId)
-          ? req.params.invoiceId[0]
-          : req.params.invoiceId;
+        const wallet = String(req.params.wallet);
+        const invoiceId = String(req.params.invoiceId);
         const eligibility = await accreditationService.checkEligibility(
           wallet,
           invoiceId

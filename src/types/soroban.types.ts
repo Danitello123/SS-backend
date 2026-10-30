@@ -1,4 +1,4 @@
-import type { xdr } from "stellar-sdk";
+import type { xdr } from "@stellar/stellar-sdk";
 
 export interface CreateEscrowParams {
   invoiceId: string;
@@ -55,6 +55,7 @@ export interface DecodedSorobanEvent {
   contractId: string;
   ledger: number;
   ledgerClosedAt: string;
+  occurredAt?: Date;
   txHash: string;
   topic: string;
   topics: unknown[];

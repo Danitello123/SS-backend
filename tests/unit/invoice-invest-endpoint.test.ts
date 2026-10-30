@@ -2,7 +2,7 @@ import crypto from "crypto";
 import express from "express";
 import request from "supertest";
 import { QueryFailedError, type DataSource } from "typeorm";
-import { Keypair } from "stellar-sdk";
+import { Keypair } from "@stellar/stellar-sdk";
 
 import { createInvoiceStateMachine } from "../../src/lib/invoice-state-machine";
 import { createErrorMiddleware } from "../../src/middleware/error.middleware";
@@ -467,6 +467,53 @@ describe("POST /invoices/:id/invest (#465)", () => {
       await expect(
         createService(createFakeDatabase(invoice)).investInInvoice(investInput(invoice))
       ).rejects.toMatchObject({ code, statusCode });
+    });
+
+    it("accepts an investment on a date-only due date before that day has fully elapsed", async () => {
+      // Postgres `date` columns come back from TypeORM as a bare "YYYY-MM-DD"
+      // string, which `new Date(...)` parses as that day's midnight UTC.
+      // Comparing against "now" directly would mark the invoice expired as
+      // soon as the due date arrives, hours before the day is actually over.
+      const todayUTC = new Date().toISOString().slice(0, 10);
+      const invoice = makeInvoice({ dueDate: todayUTC as unknown as Date });
+
+      await expect(
+        createService(createFakeDatabase(invoice)).investInInvoice(investInput(invoice))
+      ).resolves.toBeDefined();
+    });
+
+    it("rejects an investment once a date-only due date's day has fully elapsed", async () => {
+      const yesterdayUTC = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      const invoice = makeInvoice({ dueDate: yesterdayUTC as unknown as Date });
+
+      await expect(
+        createService(createFakeDatabase(invoice)).investInInvoice(investInput(invoice))
+      ).rejects.toMatchObject({ code: "invoice_expired", statusCode: 422 });
+    });
+
+    it("rejects an investment once the funding deadline has passed, even with a future due date", async () => {
+      // dueDate (repayment) is still a week out, but the funding campaign's
+      // own deadline already closed - investInInvoice only checked dueDate,
+      // letting investors buy into a campaign that should have been closed.
+      const invoice = makeInvoice({
+        dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        fundingDeadline: new Date(Date.now() - 1000),
+      });
+
+      await expect(
+        createService(createFakeDatabase(invoice)).investInInvoice(investInput(invoice))
+      ).rejects.toMatchObject({ code: "funding_deadline_passed", statusCode: 422 });
+    });
+
+    it("accepts an investment when the funding deadline is still open", async () => {
+      const invoice = makeInvoice({
+        dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        fundingDeadline: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      });
+
+      await expect(
+        createService(createFakeDatabase(invoice)).investInInvoice(investInput(invoice))
+      ).resolves.toBeDefined();
     });
 
     it("rejects the seller investing in their own invoice", async () => {

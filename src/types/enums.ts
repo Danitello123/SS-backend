@@ -81,6 +81,8 @@ export enum NotificationType {
   REFUND_PROCESSED = "refund_processed",
   SECONDARY_MARKET_SOLD = "secondary_market_sold",
   KYC_STATUS_CHANGE = "kyc_status_change",
+  SUBSCRIPTION = "subscription",
+  SUBSCRIPTION_EXPIRING = "subscription_expiring",
 }
 
 /** Seller funding-deadline extension request lifecycle (issue #477). */
@@ -96,4 +98,46 @@ export enum ListingStatus {
   SOLD = "sold",
   CANCELLED = "cancelled",
   EXPIRED = "expired",
+}
+
+/** Risk band an auto-invest rule can require (issue #596), derived from `Invoice.riskScore` (0-100, lower is safer). `null` on the rule matches any tier. */
+export enum RiskTier {
+  LOW = "low",
+  MEDIUM = "medium",
+  HIGH = "high",
+}
+
+export enum AutoInvestExecutionStatus {
+  EXECUTED = "executed",
+  SKIPPED_INSUFFICIENT_BALANCE = "skipped_insufficient_balance",
+  FAILED = "failed",
+}
+
+/** Investor referral tier (#677). Standard is the default for wallets with no referral history. */
+export enum ReferralTierLevel {
+  STANDARD = "standard",
+  BRONZE = "bronze",
+  SILVER = "silver",
+  GOLD = "gold",
+}
+
+/** Wallet loyalty tier used for yield-boost eligibility (#678). Bronze is not eligible. */
+export enum LoyaltyTier {
+  BRONZE = "bronze",
+  SILVER = "silver",
+  GOLD = "gold",
+  PLATINUM = "platinum",
+}
+
+export enum AuctionStatus {
+  ACTIVE = "active",
+  SETTLED = "settled",
+  CANCELLED = "cancelled",
+}
+
+export enum BidStatus {
+  PLACED = "placed",
+  OUTBID = "outbid",
+  WON = "won",
+  LOST = "lost",
 }

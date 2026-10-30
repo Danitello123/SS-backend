@@ -3,16 +3,17 @@ import crypto from "crypto";
 import { z } from "zod";
 import { submitInvoiceSchema } from "@/lib/invoice-submission.schema";
 import { adminNotificationQueue } from "@/services/admin-notification-queue.service";
-import { InvoiceStatus, UserType } from "@/types/enums";
+import { UserType, KYCStatus } from "@/types/enums";
 import type { AuthenticatedRequest } from "@/types/auth";
 import type { InvoiceService } from "@/services/invoice.service";
-import dataSource from "@/config/database";
-import { Invoice } from "@/models/Invoice.model";
+import type { AppConfig } from "@/config/env";
+import { ServiceError } from "@/utils/service-error";
 
 export async function submitInvoice(
   req: Request | AuthenticatedRequest,
   res: Response,
-  invoiceService?: InvoiceService
+  invoiceService?: InvoiceService,
+  config?: AppConfig
 ) {
   try {
     const user = (req as AuthenticatedRequest).user;
@@ -28,6 +29,25 @@ export async function submitInvoice(
           message: "Only sellers can submit invoices for review",
         },
       });
+    }
+
+    // KYC approval required before invoice submission is permitted
+    const appConfig = (req.app?.get?.("config") as AppConfig | undefined);
+    const skipKyc =
+      config?.kyc?.skipVerification === true ||
+      appConfig?.kyc?.skipVerification === true;
+
+    if (!skipKyc) {
+      const isApproved =
+        user.kycStatus === KYCStatus.APPROVED || user.isKycVerified === true;
+      if (!isApproved) {
+        return res.status(403).json({
+          error: {
+            code: "KYC_APPROVAL_REQUIRED",
+            message: "KYC approval is required before invoice submission is permitted",
+          },
+        });
+      }
     }
 
     const parseResult = submitInvoiceSchema.safeParse(req.body);
@@ -60,57 +80,42 @@ export async function submitInvoice(
 
     const sellerWallet = user.stellarAddress;
     const sellerId = user.id;
-    const invoiceId = crypto.randomUUID();
     const invoiceNumber = `INV-${Date.now().toString().slice(-6)}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
 
-    let savedInvoice: Partial<Invoice> = {
-      id: invoiceId,
+    if (!invoiceService) {
+      throw new ServiceError("invoice_service_unavailable", "Invoice service is unavailable", 500);
+    }
+
+    // Creates the invoice as a draft, then drives it through the same
+    // InvoiceStateMachine transition (draft -> pending) that admin-review
+    // submissions use, so status history and notification side effects fire
+    // exactly once, instead of writing the entity straight to the repository.
+    const created = await invoiceService.createInvoice({
       sellerId,
-      sellerWallet,
       invoiceNumber,
       customerName: title,
-      title,
       description,
       amount: faceValue.toString(),
-      faceValue: faceValue.toString(),
       discountRate: (yieldBps / 100).toFixed(2),
-      yieldBps,
-      fundingTarget: fundingTarget.toString(),
-      netAmount: fundingTarget.toString(),
       dueDate: fundingDeadline,
-      fundingDeadline,
       ipfsHash: ipfsDocumentUrl,
+      sellerWallet,
+      title,
+      faceValue: faceValue.toString(),
+      fundingTarget: fundingTarget.toString(),
+      yieldBps,
+      fundingDeadline,
       ipfsDocumentUrl,
-      status: InvoiceStatus.PENDING,
-      rejectionReason: null,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
+    });
 
-    const invSvc = invoiceService as unknown as {
-      submitInvoice?: (params: unknown) => Promise<Invoice>;
-    };
-    if (invSvc && typeof invSvc.submitInvoice === "function") {
-      savedInvoice = await invSvc.submitInvoice({
-        sellerId,
-        sellerWallet,
-        title,
-        description,
-        faceValue,
-        fundingTarget,
-        yieldBps,
-        fundingDeadline,
-        ipfsDocumentUrl,
-      });
-    } else if (dataSource.isInitialized) {
-      const repo = dataSource.getRepository(Invoice);
-      const invoiceEntity = repo.create(savedInvoice as Invoice);
-      savedInvoice = await repo.save(invoiceEntity);
-    }
+    const submitted = await invoiceService.submitInvoiceForReview({
+      invoiceId: created.id,
+      sellerId,
+    });
 
     // Emit invoice_submitted event to admin notification queue
     await adminNotificationQueue.emitEvent("invoice_submitted", {
-      invoiceId: savedInvoice.id || invoiceId,
+      invoiceId: submitted.id,
       sellerId,
       sellerWallet,
       title,
@@ -125,11 +130,11 @@ export async function submitInvoice(
 
     return res.status(201).json({
       success: true,
-      data: savedInvoice,
+      data: submitted,
     });
   } catch (err: unknown) {
-    const appErr = err as { status?: number; code?: string; message?: string };
-    return res.status(appErr.status ?? 500).json({
+    const appErr = err as { status?: number; statusCode?: number; code?: string; message?: string };
+    return res.status(appErr.statusCode ?? appErr.status ?? 500).json({
       error: {
         code: appErr.code ?? "INTERNAL_ERROR",
         message: appErr.message ?? "Internal server error",

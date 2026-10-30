@@ -37,8 +37,11 @@ export const MAX_BEARER_TOKEN_LENGTH = 4_096;
  */
 export const DEFAULT_AUTH_LOOKUP_TIMEOUT_MS = 5_000;
 
-/** Tokens are signed by AuthService with the default HMAC algorithm. */
-const ALLOWED_JWT_ALGORITHMS: jwt.Algorithm[] = ["HS256", "RS256", "ES256"];
+/**
+ * Tokens are verified against the symmetric JWT_SECRET, so only HMAC is
+ * accepted. Allowing RS256/ES256 here would open algorithm confusion attacks.
+ */
+export const ALLOWED_JWT_ALGORITHMS: jwt.Algorithm[] = ["HS256"];
 
 const JWT_SHAPE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$/;
 
@@ -268,15 +271,34 @@ export async function authenticateJWT(req: Request, _res: Response, next: NextFu
   }
 
   const { userId, stellarAddress, wallet, userType, role } = claims as Partial<AuthTokenPayload>;
+  const resolvedAddress = nonEmptyString(wallet) ?? nonEmptyString(stellarAddress) ?? subject;
+
+  // Issue #610: Check wallet suspension status
+  const { isWalletSuspended } = await import("@/middleware/suspended-wallet.middleware");
+  if (isWalletSuspended(resolvedAddress)) {
+    next(
+      new HttpError(
+        403,
+        "Wallet is suspended and cannot perform authenticated actions.",
+        buildAuthFailureDetails(token, "wallet_suspended")
+      )
+    );
+    return;
+  }
+
+  const claimsRecord = claims as Record<string, unknown>;
+  const rawKycStatus = claimsRecord.kycStatus as KYCStatus | undefined;
 
   (req as AuthenticatedRequest).user = {
     id: nonEmptyString(userId) ?? subject,
     // Tokens are issued with the wallet address as subject.
-    stellarAddress: nonEmptyString(wallet) ?? nonEmptyString(stellarAddress) ?? subject,
+    stellarAddress: resolvedAddress,
     email: null,
     userType: userType || role || (null as unknown as UserType),
-    kycStatus: null as unknown as KYCStatus,
-    isKycVerified: false,
+    kycStatus: rawKycStatus ?? (null as unknown as KYCStatus),
+    isKycVerified: Boolean(
+      claimsRecord.isKycVerified || rawKycStatus === KYCStatus.APPROVED
+    ),
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -355,7 +377,7 @@ export function requireSeller() {
   };
 }
 
-export function requireAdmin(adminWallets: string[]) {
+export function requireAdmin(adminWallets: string[] = []) {
   return (req: Request, _res: Response, next: NextFunction): void => {
     const user = (req as AuthenticatedRequest).user;
     if (!user) {
@@ -363,12 +385,15 @@ export function requireAdmin(adminWallets: string[]) {
       return;
     }
 
-    if (!adminWallets.includes(user.stellarAddress)) {
-      next(new AppError(403, "Admin privileges required", "ADMIN_REQUIRED"));
+    if (
+      user.userType === UserType.ADMIN ||
+      (adminWallets.length > 0 && adminWallets.includes(user.stellarAddress))
+    ) {
+      next();
       return;
     }
 
-    next();
+    next(new AppError(403, "Admin privileges required", "ADMIN_REQUIRED"));
   };
 }
 
